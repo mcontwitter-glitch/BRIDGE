@@ -3,25 +3,26 @@ pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 import {ILayerZeroEndpointV2} from "./interfaces/ILayerZeroEndpointV2.sol";
 import {IOAppReceiver} from "./interfaces/IOAppReceiver.sol";
 import {ITwinCollection} from "./interfaces/ITwinCollection.sol";
+import {TwinCollection} from "./TwinCollection.sol";
 import {SwapPayload} from "./libraries/SwapPayload.sol";
 
 /// @title NftTwinMinter
-/// @notice Dest-chain minter: mint twin with same tokenURI; burn/lock twin to unlock home original.
-/// @dev Twin collection must grant MINTER_ROLE to this contract.
-/// TODO: replace mock endpoint; setPeer to Abstract NftLockVault; real _lzSend.
+/// @notice Mints a twin into a destination collection that belongs to one origin collection.
+/// @dev The first lock for an origin collection creates its twin collection. Later locks reuse it.
 contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
     ILayerZeroEndpointV2 public endpoint;
     uint32 public immutable localEid;
 
-    /// @dev twin collection this minter controls (existing collection + minter role)
-    ITwinCollection public twinCollection;
-
     /// @dev peers[eid] = OApp address on that chain (NftLockVault on Abstract)
     mapping(uint32 => bytes32) public peers;
+
+    /// @dev origin collection on Abstract => twin collection on this chain
+    mapping(address => address) public collectionOf;
 
     /// lockId => twin minted
     mapping(bytes32 => bool) public minted;
@@ -37,7 +38,7 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
 
     event PeerSet(uint32 indexed eid, bytes32 peer);
     event EndpointUpdated(address indexed endpoint);
-    event TwinCollectionUpdated(address indexed collection);
+    event CollectionPrepared(address indexed origin, address indexed twin);
     event TwinMinted(
         bytes32 indexed lockId,
         address indexed to,
@@ -55,11 +56,11 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
     error NotTwinOwner();
     error BadAction(uint8 action);
     error OnlyEndpoint();
+    error CollectionUnset(address origin);
 
-    constructor(address endpoint_, uint32 localEid_, address twinCollection_) Ownable(msg.sender) {
+    constructor(address endpoint_, uint32 localEid_) Ownable(msg.sender) {
         endpoint = ILayerZeroEndpointV2(endpoint_);
         localEid = localEid_;
-        twinCollection = ITwinCollection(twinCollection_);
     }
 
     function setEndpoint(address endpoint_) external onlyOwner {
@@ -67,18 +68,18 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
         emit EndpointUpdated(endpoint_);
     }
 
-    function setTwinCollection(address twinCollection_) external onlyOwner {
-        twinCollection = ITwinCollection(twinCollection_);
-        emit TwinCollectionUpdated(twinCollection_);
+    /// @notice Point an origin collection at a twin collection this minter can mint into.
+    function prepareCollection(address origin, address twin) external onlyOwner {
+        collectionOf[origin] = twin;
+        emit CollectionPrepared(origin, twin);
     }
 
-    /// @notice TODO: real OApp setPeer
     function setPeer(uint32 eid, bytes32 peer) external onlyOwner {
         peers[eid] = peer;
         emit PeerSet(eid, peer);
     }
 
-    /// @notice Receive lock message from Abstract vault → mint twin with same tokenURI.
+    /// @notice Receive lock message from Abstract vault and mint into that origin's twin collection.
     function lzReceive(
         uint32 srcEid,
         bytes32 sender,
@@ -95,6 +96,8 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
         SwapPayload.LockMintPayload memory p = SwapPayload.decodeLockMint(message);
         if (minted[p.lockId]) revert AlreadyMinted(p.lockId);
 
+        ITwinCollection twin = _collectionFor(p.collection);
+
         minted[p.lockId] = true;
         twins[p.lockId] = TwinRecord({
             originCollection: p.collection,
@@ -104,14 +107,12 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
             active: true
         });
 
-        // Mint into existing collection with same tokenURI (IPFS/Arweave verbatim)
-        twinCollection.mintWithURI(p.recipient, p.tokenId, p.tokenURI);
+        twin.mintWithURI(p.recipient, p.tokenId, p.tokenURI);
 
         emit TwinMinted(p.lockId, p.recipient, p.tokenId, p.tokenURI, p.originEid);
     }
 
-    /// @notice Burn/lock dest twin and send unlock message back to Abstract vault.
-    /// @dev Burns twin via collection minter role; home vault unlocks original.
+    /// @notice Burn the dest twin and send the unlock message back to the Abstract vault.
     function unlockBack(bytes32 lockId, address recipient, bytes calldata options)
         external
         payable
@@ -119,13 +120,14 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
     {
         TwinRecord storage rec = twins[lockId];
         if (!rec.active) revert TwinNotActive(lockId);
-        if (twinCollection.ownerOf(rec.tokenId) != msg.sender) revert NotTwinOwner();
+        ITwinCollection twin = ITwinCollection(collectionOf[rec.originCollection]);
+        if (address(twin) == address(0)) revert CollectionUnset(rec.originCollection);
+        if (twin.ownerOf(rec.tokenId) != msg.sender) revert NotTwinOwner();
 
         uint32 originEid = rec.originEid;
         if (peers[originEid] == bytes32(0)) revert PeerNotSet(originEid);
 
-        // Burn twin (dest-side lock/burn of twin)
-        twinCollection.burn(rec.tokenId);
+        twin.burn(rec.tokenId);
         rec.active = false;
 
         SwapPayload.UnlockBurnPayload memory payload = SwapPayload.UnlockBurnPayload({
@@ -139,7 +141,6 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
 
         bytes memory message = SwapPayload.encodeUnlockBurn(payload);
 
-        // TODO: real _lzSend to Abstract NftLockVault
         ILayerZeroEndpointV2.MessagingParams memory params = ILayerZeroEndpointV2.MessagingParams({
             dstEid: originEid,
             receiver: peers[originEid],
@@ -182,5 +183,16 @@ contract NftTwinMinter is Ownable, ReentrancyGuard, IOAppReceiver {
             payInLzToken: false
         });
         return endpoint.quote(params, address(this));
+    }
+
+    function _collectionFor(address origin) internal returns (ITwinCollection twin) {
+        address existing = collectionOf[origin];
+        if (existing != address(0)) return ITwinCollection(existing);
+
+        string memory label = string.concat("Twin ", Strings.toHexString(origin));
+        TwinCollection created = new TwinCollection(label, "TWIN", owner(), address(this));
+        collectionOf[origin] = address(created);
+        emit CollectionPrepared(origin, address(created));
+        return ITwinCollection(address(created));
     }
 }
