@@ -1,0 +1,59 @@
+{
+  "phase": "1+adapters",
+  "note": "PLACEHOLDERS for app contracts. Abstract LZ Endpoint V2 is the official mainnet address from https://metadata.layerzero-api.com/v1/metadata (eid 30324). Never commit private keys.",
+  "abstract": {
+    "chainId": 2741,
+    "lzEid": 30324,
+    "rpc": "https://api.mainnet.abs.xyz",
+    "nftLockVault": "0x0000000000000000000000000000000000000000",
+    "lzEndpoint": "0x5c6cff4b7c49805f8295ff73c204ac83f3bc4ae7",
+    "homeCollection": "0x0000000000000000000000000000000000000000"
+  },
+  "ethereum": {
+    "chainId": 1,
+    "lzEid": 30101,
+    "rpc": "https://eth.llamarpc.com",
+    "nftTwinMinter": "0x0000000000000000000000000000000000000000",
+    "twinCollection": "0x0000000000000000000000000000000000000000",
+    "lzEndpoint": "0x0000000000000000000000000000000000000000"
+  },
+  "base": {
+    "chainId": 8453,
+    "lzEid": 30184,
+    "rpc": "https://mainnet.base.org",
+    "nftTwinMinter": "0x0000000000000000000000000000000000000000",
+    "twinCollection": "0x0000000000000000000000000000000000000000",
+    "lzEndpoint": "0x0000000000000000000000000000000000000000"
+  },
+  "bnb": {
+    "chainId": 56,
+    "lzEid": 30102,
+    "rpc": "https://bsc-dataseed.binance.org",
+    "nftTwinMinter": "0x0000000000000000000000000000000000000000",
+    "twinCollection": "0x0000000000000000000000000000000000000000",
+    "lzEndpoint": "0x0000000000000000000000000000000000000000"
+  },
+  "apechain": {
+    "chainId": 33139,
+    "lzEid": 30312,
+    "rpc": "https://rpc.apechain.com/http",
+    "nftTwinMinter": "0x0000000000000000000000000000000000000000",
+    "twinCollection": "0x0000000000000000000000000000000000000000",
+    "lzEndpoint": "0x0000000000000000000000000000000000000000"
+  },
+  "solana": {
+    "lzEid": 30168,
+    "rpc": "https://api.mainnet-beta.solana.com",
+    "programId": "BF404Twin1111111111111111111111111111111111",
+    "collectionMint": "BF404Coll111111111111111111111111111111111",
+    "minterAuthority": "BF404Auth111111111111111111111111111111111",
+    "messaging": "layerzero-solana-endpoint | wormhole-vaa | custom-relayer"
+  },
+  "sui": {
+    "lzEid": 30378,
+    "rpc": "https://fullnode.mainnet.sui.io:443",
+    "packageId": "0xbf40400000000000000000000000000000000000000000000000000000000001",
+    "collectionObjectId": "0xbf404c0111111111111111111111111111111111111111111111111111111111",
+    "messaging": "layerzero-sui-endpoint | custom-relayer"
+  }
+}
