@@ -245,13 +245,18 @@ async function withProvider(chain, fn) {
   throw last;
 }
 
+function isArchiveLimit(err) {
+  const text = `${err?.shortMessage || ""} ${err?.message || ""} ${err?.info?.responseBody || ""}`.toLowerCase();
+  return text.includes("archive") || text.includes("personal token") || text.includes("pruned");
+}
+
 async function getLogsChunked(provider, filter) {
   const from = filter.fromBlock;
   const to = filter.toBlock;
   try {
     return await provider.getLogs(filter);
   } catch (err) {
-    if (to - from < 20) throw err;
+    if (isArchiveLimit(err) || to - from < 20) throw err;
     const mid = Math.floor((from + to) / 2);
     const left = await getLogsChunked(provider, { ...filter, toBlock: mid });
     const right = await getLogsChunked(provider, { ...filter, fromBlock: mid + 1 });
@@ -493,14 +498,25 @@ async function discover(chain, state) {
       return;
     }
     const step = 8_000;
-    for (let start = fromBlock; start <= latest; start += step) {
-      const end = Math.min(latest, start + step - 1);
-      const logs = await getLogsChunked(provider, {
-        address: chain.oapp,
-        topics: [MESSAGE_SENT_TOPIC],
-        fromBlock: start,
-        toBlock: end,
-      });
+    let start = fromBlock;
+    while (start <= latest) {
+      let end = Math.min(latest, start + step - 1);
+      let logs;
+      try {
+        logs = await getLogsChunked(provider, {
+          address: chain.oapp,
+          topics: [MESSAGE_SENT_TOPIC],
+          fromBlock: start,
+          toBlock: end,
+        });
+      } catch (err) {
+        if (!isArchiveLimit(err)) throw err;
+        const recent = Math.max(start, latest - 2_000);
+        if (recent <= start) throw err;
+        log(`scan ${chain.key} archive limit at block ${start}; continuing from ${recent}`);
+        start = recent;
+        continue;
+      }
       for (const entry of logs) {
       let parsed;
       try {
@@ -542,6 +558,7 @@ async function discover(chain, state) {
       );
       }
       state.cursors[chain.key] = end;
+      start = end + 1;
     }
   });
 }
