@@ -15,7 +15,13 @@ import {OAppConfig} from "./OAppConfig.sol";
 
 /// @title NftLockVaultUpgradeable
 /// @notice UUPS vault. Abstract must be compiled with evm_version paris (no PUSH0).
-/// @dev A later upgrade can add Solana and Sui wiring without changing this proxy address.
+/// @dev Push-only custody. The holder calls the collection's safeTransferFrom into this
+///      vault. This contract never calls transferFrom/safeTransferFrom to pull a token.
+///      Limit Break's transfer validator (CallerOrFromMustBeWhitelisted) rejects the vault
+///      as an operator caller. Do not whitelist the vault.
+///      Storage: slots 0-6 and the first 39 gap slots match the previous implementation.
+///      `pushCredit` occupies the former last gap slot (46). Peers, endpoint, owner,
+///      delegate, and localEid are untouched by an upgrade.
 contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, IERC721Receiver, IOAppReceiver {
     using SwapPayload for SwapPayload.LockMintPayload;
     using SwapPayload for SwapPayload.UnlockBurnPayload;
@@ -36,7 +42,11 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
     mapping(bytes32 => LockRecord) public locks;
     mapping(address => mapping(uint256 => bytes32)) public activeLockId;
 
-    uint256[40] private __gap;
+    /// @dev Shrunk by one slot so `pushCredit` can be appended without shifting 0-6.
+    uint256[39] private __gap;
+
+    /// @dev depositor => collection => tokenId => prepaid native fee. Slot 46.
+    mapping(address => mapping(address => mapping(uint256 => uint256))) public pushCredit;
 
     event NftLocked(
         bytes32 indexed lockId,
@@ -50,6 +60,7 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
     event NftUnlocked(bytes32 indexed lockId, address indexed collection, uint256 indexed tokenId, address recipient);
     event MessageSent(bytes32 indexed lockId, uint32 destEid, bytes32 guid);
     event SolanaNftLocked(bytes32 indexed lockId, bytes32 indexed solanaRecipient, uint32 destEid);
+    event PushPrepaid(address indexed depositor, address indexed collection, uint256 indexed tokenId, uint256 amount);
 
     error PeerNotSet(uint32 eid);
     error NotPeer(uint32 srcEid, bytes32 sender);
@@ -61,6 +72,12 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
     error NotSolanaDestination(uint32 eid);
     error SolanaRecipientZero();
     error Reentrancy();
+    error VaultDoesNotPull();
+    error BridgeDataRequired();
+    error BadPushData();
+    error InsufficientPushFee();
+    error NotHolding();
+    error RecipientZero();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() Ownable(msg.sender) {
@@ -77,115 +94,38 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         emit DelegateSet(owner_);
     }
 
-    function lockAndSwap(
-        address collection,
-        uint256 tokenId,
-        uint32 destEid,
-        address recipient,
-        bytes calldata options
-    ) external payable nonReentrant returns (bytes32 lockId) {
-        if (peers[destEid] == bytes32(0)) revert PeerNotSet(destEid);
-        if (activeLockId[collection][tokenId] != bytes32(0)) {
-            revert AlreadyLocked(collection, tokenId);
-        }
-        if (IERC721(collection).ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
-
-        string memory uri = _tokenURI(collection, tokenId);
-        IERC721(collection).safeTransferFrom(msg.sender, address(this), tokenId);
-
-        lockId = keccak256(abi.encodePacked(collection, tokenId, msg.sender, destEid, block.number, localEid));
-        locks[lockId] = LockRecord({
-            collection: collection,
-            tokenId: tokenId,
-            owner: msg.sender,
-            destEid: destEid,
-            tokenURI: uri,
-            active: true
-        });
-        activeLockId[collection][tokenId] = lockId;
-
-        bytes memory message = SwapPayload.encodeLockMint(
-            SwapPayload.LockMintPayload({
-                action: SwapPayload.ACTION_LOCK_MINT,
-                collection: collection,
-                tokenId: tokenId,
-                tokenURI: uri,
-                recipient: recipient,
-                originEid: localEid,
-                lockId: lockId
-            })
-        );
-
-        ILayerZeroEndpointV2.MessagingReceipt memory receipt = endpoint.send{value: msg.value}(
-            ILayerZeroEndpointV2.MessagingParams({
-                dstEid: destEid,
-                receiver: peers[destEid],
-                message: message,
-                options: options,
-                payInLzToken: false
-            }),
-            msg.sender
-        );
-
-        emit NftLocked(lockId, collection, tokenId, msg.sender, destEid, uri, recipient);
-        emit MessageSent(lockId, destEid, receipt.guid);
+    /// @notice Kept so old calldata does not fall through the proxy. Does not pull.
+    function lockAndSwap(address, uint256, uint32, address, bytes calldata)
+        external
+        payable
+        returns (bytes32)
+    {
+        revert VaultDoesNotPull();
     }
 
-    /// @notice Present so a Solana peer can be configured later without redeploying the proxy.
-    function lockAndSwapSolana(
-        address collection,
-        uint256 tokenId,
-        uint32 destEid,
-        bytes32 solanaRecipient,
-        bytes calldata options
-    ) external payable nonReentrant returns (bytes32 lockId) {
-        if (destEid != ChainIds.SOLANA_EID) revert NotSolanaDestination(destEid);
-        if (solanaRecipient == bytes32(0)) revert SolanaRecipientZero();
-        if (peers[destEid] == bytes32(0)) revert PeerNotSet(destEid);
-        if (activeLockId[collection][tokenId] != bytes32(0)) {
-            revert AlreadyLocked(collection, tokenId);
-        }
-        if (IERC721(collection).ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+    /// @notice Kept so old calldata does not fall through the proxy. Does not pull.
+    function lockAndSwapSolana(address, uint256, uint32, bytes32, bytes calldata)
+        external
+        payable
+        returns (bytes32)
+    {
+        revert VaultDoesNotPull();
+    }
 
-        string memory uri = _tokenURI(collection, tokenId);
-        IERC721(collection).safeTransferFrom(msg.sender, address(this), tokenId);
+    /// @notice Store the LayerZero fee before the holder transfers the NFT in.
+    /// @dev The following safeTransferFrom must use `from` equal to msg.sender here.
+    function prepayPush(address collection, uint256 tokenId) external payable nonReentrant {
+        if (msg.value == 0) revert InsufficientPushFee();
+        pushCredit[msg.sender][collection][tokenId] += msg.value;
+        emit PushPrepaid(msg.sender, collection, tokenId, msg.value);
+    }
 
-        lockId = keccak256(abi.encodePacked(collection, tokenId, msg.sender, destEid, block.number, localEid));
-        locks[lockId] = LockRecord({
-            collection: collection,
-            tokenId: tokenId,
-            owner: msg.sender,
-            destEid: destEid,
-            tokenURI: uri,
-            active: true
-        });
-        activeLockId[collection][tokenId] = lockId;
-
-        bytes memory message = SwapPayload.encodeLockMintSolana(
-            SwapPayload.LockMintSolanaPayload({
-                action: SwapPayload.ACTION_LOCK_MINT,
-                collection: collection,
-                tokenId: tokenId,
-                tokenURI: uri,
-                solanaRecipient: solanaRecipient,
-                originEid: localEid,
-                lockId: lockId
-            })
-        );
-
-        ILayerZeroEndpointV2.MessagingReceipt memory receipt = endpoint.send{value: msg.value}(
-            ILayerZeroEndpointV2.MessagingParams({
-                dstEid: destEid,
-                receiver: peers[destEid],
-                message: message,
-                options: options,
-                payInLzToken: false
-            }),
-            msg.sender
-        );
-
-        emit SolanaNftLocked(lockId, solanaRecipient, destEid);
-        emit MessageSent(lockId, destEid, receipt.guid);
+    function withdrawPushCredit(address collection, uint256 tokenId) external nonReentrant {
+        uint256 amount = pushCredit[msg.sender][collection][tokenId];
+        if (amount == 0) revert InsufficientPushFee();
+        pushCredit[msg.sender][collection][tokenId] = 0;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok, "refund failed");
     }
 
     function lzReceive(
@@ -202,6 +142,7 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         if (action != SwapPayload.ACTION_UNLOCK_BURN) revert BadAction(action);
 
         SwapPayload.UnlockBurnPayload memory p = SwapPayload.decodeUnlockBurn(message);
+        // Buyer is the address in the return message, not the original bridger.
         _unlock(p.lockId, p.recipient);
     }
 
@@ -237,23 +178,149 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         );
     }
 
+    /// @dev Push payload: abi.encode(uint32 destEid, bytes32 recipient, bool solana, bytes options).
+    ///      EVM recipient is the address left-padded to bytes32. solana must be false unless destEid is Solana.
+    function onERC721Received(address, address from, uint256 tokenId, bytes calldata data)
+        external
+        nonReentrant
+        returns (bytes4)
+    {
+        if (data.length == 0) revert BridgeDataRequired();
+        _lockPushed(msg.sender, from, tokenId, data);
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    function _lockPushed(address collection, address from, uint256 tokenId, bytes calldata data) internal {
+        if (from == address(0) || from == address(this)) revert BadPushData();
+        if (IERC721(collection).ownerOf(tokenId) != address(this)) revert NotHolding();
+        bytes32 lockId = _storeLock(collection, from, tokenId, data);
+        _payAndSend(lockId, from, data);
+    }
+
+    function _storeLock(address collection, address from, uint256 tokenId, bytes calldata data)
+        internal
+        returns (bytes32 lockId)
+    {
+        (uint32 destEid,,,) = abi.decode(data, (uint32, bytes32, bool, bytes));
+        if (peers[destEid] == bytes32(0)) revert PeerNotSet(destEid);
+        if (activeLockId[collection][tokenId] != bytes32(0)) revert AlreadyLocked(collection, tokenId);
+        lockId = keccak256(abi.encodePacked(collection, tokenId, from, destEid, block.number, localEid));
+        locks[lockId] = LockRecord({
+            collection: collection,
+            tokenId: tokenId,
+            owner: from,
+            destEid: destEid,
+            tokenURI: _tokenURI(collection, tokenId),
+            active: true
+        });
+        activeLockId[collection][tokenId] = lockId;
+    }
+
+    function _payAndSend(bytes32 lockId, address from, bytes calldata data) internal {
+        LockRecord memory rec = locks[lockId];
+        (, bytes32 recipientRaw, bool solana, bytes memory options) =
+            abi.decode(data, (uint32, bytes32, bool, bytes));
+        uint256 prepaid = pushCredit[from][rec.collection][rec.tokenId];
+        uint256 fee = prepaid + msg.value;
+        if (fee == 0) revert InsufficientPushFee();
+        if (prepaid != 0) pushCredit[from][rec.collection][rec.tokenId] = 0;
+        _dispatch(lockId, recipientRaw, solana, options, fee, from);
+    }
+
+    function _dispatch(
+        bytes32 lockId,
+        bytes32 recipientRaw,
+        bool solana,
+        bytes memory options,
+        uint256 fee,
+        address refundTo
+    ) internal {
+        LockRecord memory rec = locks[lockId];
+        bytes memory message;
+        if (rec.destEid == ChainIds.SOLANA_EID) {
+            if (recipientRaw == bytes32(0)) revert SolanaRecipientZero();
+            message = _encodeSolana(rec, recipientRaw, lockId);
+            emit SolanaNftLocked(lockId, recipientRaw, rec.destEid);
+        } else {
+            if (solana) revert NotSolanaDestination(rec.destEid);
+            address recipient = address(uint160(uint256(recipientRaw)));
+            if (recipient == address(0)) revert RecipientZero();
+            message = _encodeEvm(rec, recipient, lockId);
+            emit NftLocked(lockId, rec.collection, rec.tokenId, rec.owner, rec.destEid, rec.tokenURI, recipient);
+        }
+        ILayerZeroEndpointV2.MessagingReceipt memory receipt = endpoint.send{value: fee}(
+            ILayerZeroEndpointV2.MessagingParams({
+                dstEid: rec.destEid,
+                receiver: peers[rec.destEid],
+                message: message,
+                options: options,
+                payInLzToken: false
+            }),
+            refundTo
+        );
+        emit MessageSent(lockId, rec.destEid, receipt.guid);
+    }
+
+    function _encodeEvm(LockRecord memory rec, address recipient, bytes32 lockId) internal view returns (bytes memory) {
+        return SwapPayload.encodeLockMint(
+            SwapPayload.LockMintPayload({
+                action: SwapPayload.ACTION_LOCK_MINT,
+                collection: rec.collection,
+                tokenId: rec.tokenId,
+                tokenURI: rec.tokenURI,
+                recipient: recipient,
+                originEid: localEid,
+                lockId: lockId
+            })
+        );
+    }
+
+    function _encodeSolana(LockRecord memory rec, bytes32 recipientRaw, bytes32 lockId)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return SwapPayload.encodeLockMintSolana(
+            SwapPayload.LockMintSolanaPayload({
+                action: SwapPayload.ACTION_LOCK_MINT,
+                collection: rec.collection,
+                tokenId: rec.tokenId,
+                tokenURI: rec.tokenURI,
+                solanaRecipient: recipientRaw,
+                originEid: localEid,
+                lockId: lockId
+            })
+        );
+    }
+
     function _unlock(bytes32 lockId, address recipient) internal {
         LockRecord storage rec = locks[lockId];
         if (!rec.active) revert LockNotActive(lockId);
+        if (recipient == address(0)) revert RecipientZero();
         rec.active = false;
         delete activeLockId[rec.collection][rec.tokenId];
-        IERC721(rec.collection).safeTransferFrom(address(this), recipient, rec.tokenId);
+        _releaseOriginal(rec.collection, recipient, rec.tokenId);
         emit NftUnlocked(lockId, rec.collection, rec.tokenId, recipient);
+    }
+
+    /// @notice Send the escrowed original to `buyer`.
+    /// @dev `buyer` is the recipient in the unlock message, not `locks[lockId].owner`.
+    ///      The transfer is owner-initiated: `from` is this vault, which owns the token,
+    ///      so the validator sees caller == from. A pull (caller != from) is what reverts
+    ///      with CallerOrFromMustBeWhitelisted.
+    ///
+    ///      This can still revert. RulesetWhitelist blocks a contract caller when Block All
+    ///      OTC is on (CallerOrFromMustBeWhitelisted) or when OTC for smart wallets is off
+    ///      (OTCNotAllowedForSmartWallets), because this vault has code and is not
+    ///      whitelisted. Do not whitelist. Owner-as-from is the best send available.
+    function _releaseOriginal(address collection, address buyer, uint256 tokenId) internal {
+        IERC721(collection).transferFrom(address(this), buyer, tokenId);
     }
 
     function _tokenURI(address collection, uint256 tokenId) internal view returns (string memory) {
         (bool ok, bytes memory data) = collection.staticcall(abi.encodeWithSignature("tokenURI(uint256)", tokenId));
         require(ok && data.length > 0, "tokenURI failed");
         return abi.decode(data, (string));
-    }
-
-    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
-        return IERC721Receiver.onERC721Received.selector;
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
