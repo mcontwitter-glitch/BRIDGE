@@ -17,6 +17,12 @@ contract MockReceiveUln is IReceiveUln302 {
         lastConfirmations = confirmations;
         lastCaller = msg.sender;
     }
+
+    function commitVerification(bytes calldata, bytes32) external {}
+
+    function getUlnConfig(address, uint32) external pure returns (IReceiveUln302.UlnConfig memory cfg) {
+        cfg.confirmations = 1;
+    }
 }
 
 contract OwnerDVNTest is Test {

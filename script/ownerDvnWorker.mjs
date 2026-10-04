@@ -607,6 +607,8 @@ async function assertOwners(wallet) {
 }
 
 async function main() {
+  console.log("ownerDvnWorker is retired. The paid LayerZero executor calls ExecutorDVN.verifyAndCommit. Not starting.");
+  return;
   const raw = process.env.BRIDGE_OWNER_PK;
   if (!raw) {
     console.error("BRIDGE_OWNER_PK is not set");

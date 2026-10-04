@@ -8,15 +8,29 @@ Abstract LayerZero V2 endpoint id is **30324** (not 30310). Destination eids: Et
 
 ## Automatic mint
 
-A lock is one user transaction. The vault sends the LayerZero packet in that same call. `script/ownerDvnWorker.mjs` watches `MessageSent` on the vault and each minter, reads `PacketSent` from the transaction, waits the pathway's configured confirmations, and uses `BRIDGE_OWNER_PK` to call `verify` on the destination `OwnerDVN`. That function only records the DVN witness. The worker then calls `commitVerification` on the receive ULN and, if `inboundPayloadHash` is still the payload hash, `endpoint.lzReceive`. If the LayerZero executor already delivered it, the worker does not send a second execute.
+A lock is one user signature. It escrows the NFT and pays the LayerZero fee. The options in that fee include the destination `lzReceive` gas for the twin mint (12,000,000 gas). That payment is what funds delivery. A transaction on Abstract does not mint on the other chain, and it does not swap into destination gas.
 
-The site then says the twin is minting and polls the destination `minted` flag. The user does not sign again.
+`ExecutorDVN` is the required DVN. `assignJob` records a payload hash only when the pathway send MessageLib calls it. `verifyAndCommit` hashes the packet the same way that MessageLib does (`keccak256` of the bytes after the 81-byte header). It does not take a caller-supplied hash. If this chain's MessageLib already recorded the header, the hash must match that record. Otherwise only the configured LayerZero executor, or an `ADMIN_ROLE` holder on that executor, may present the packet. The contract then calls `ReceiveUln302.verify`, `commitVerification`, and `EndpointV2.lzReceive`, which mints the twin.
 
-ApeChain nonces 1 and 2 stay skipped. The worker does not change DVN config and does not print the key.
+`script/ownerDvnWorker.mjs` exits immediately and must not be restarted. ApeChain inbound nonces 1 and 2 stay skipped. Peers are unchanged. LayerZero Labs is not a required DVN.
+
+The stock LayerZero executor does not call `ExecutorDVN`. It waits until `ReceiveUln302.verifiable` is true, then calls `commitVerification` and `lzReceive`. `commitVerification` reverts `LZ_ULN_Verifying` until this DVN has called `verify`. The only destination call that does that without an owner key is `verifyAndCommit`, and only the configured executor or an `ADMIN_ROLE` holder on that executor may present a packet this chain did not already record. Their worker does not make that call. A destination mint therefore still needs that one destination transaction. It does not need a process on this machine.
+
+Ethereum was not upgraded. The owner balance cannot pay the deploy. Pathways that verify on Ethereum still use the old owner DVN.
+
+Deployed `ExecutorDVN` (send and receive, both directions, except Ethereum):
+
+| Chain | DVN |
+| --- | --- |
+| Abstract | `0x565D9E3BA522de1090C645f372C2FF0Df67a9b42` |
+| Base | `0xf7e5baae563b90295ac13ad199ac3c084962b09d` |
+| BNB | `0xf7e5bAaE563B90295ac13aD199aC3c084962b09D` |
+| ApeChain | `0x2e57bb5c4c78f9bedcdfae9a8eeabe0f6f6e3fb4` |
+| Robinhood | `0xf7e5baae563b90295ac13ad199ac3c084962b09d` |
 
 ```bash
+forge test
 node script/ownerDvnWorker.test.mjs
-node script/ownerDvnWorker.mjs
 ```
 
 ## Test
