@@ -190,4 +190,46 @@ contract PushLockTest is Test {
         vault.lzReceive(ChainIds.BASE_EID, bytes32(uint256(uint160(peer))), bytes32(0), unlockMsg, "");
         assertEq(blocked.ownerOf(tokenId), address(vault));
     }
+
+    function test_endpointV2ReceiveUnlocksAndPathChecks() public {
+        uint256 tokenId = nft.mint(alice, "ipfs://Qm/7");
+        vm.startPrank(alice);
+        vault.prepayPush{value: 0.001 ether}(address(nft), tokenId);
+        nft.safeTransferFrom(alice, address(vault), tokenId, _pushData(bob));
+        vm.stopPrank();
+        bytes32 lockId = vault.activeLockId(address(nft), tokenId);
+
+        bytes32 peerRaw = bytes32(uint256(uint160(peer)));
+        NftLockVaultUpgradeable.LzOrigin memory origin = NftLockVaultUpgradeable.LzOrigin({
+            srcEid: ChainIds.BASE_EID,
+            sender: peerRaw,
+            nonce: 1
+        });
+        assertTrue(vault.allowInitializePath(origin));
+        origin.sender = bytes32(0);
+        assertFalse(vault.allowInitializePath(origin));
+        origin.sender = bytes32(uint256(uint160(address(0xBEEF))));
+        assertFalse(vault.allowInitializePath(origin));
+        assertEq(vault.nextNonce(ChainIds.BASE_EID, peerRaw), 0);
+
+        bytes memory unlockMsg = SwapPayload.encodeUnlockBurn(
+            SwapPayload.UnlockBurnPayload({
+                action: SwapPayload.ACTION_UNLOCK_BURN,
+                collection: address(nft),
+                tokenId: tokenId,
+                recipient: bob,
+                destEid: ChainIds.BASE_EID,
+                lockId: lockId
+            })
+        );
+        vm.prank(address(ep));
+        vault.lzReceive(
+            NftLockVaultUpgradeable.LzOrigin({srcEid: ChainIds.BASE_EID, sender: peerRaw, nonce: 1}),
+            bytes32(0),
+            unlockMsg,
+            address(0),
+            ""
+        );
+        assertEq(nft.ownerOf(tokenId), bob);
+    }
 }

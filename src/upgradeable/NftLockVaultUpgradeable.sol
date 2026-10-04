@@ -22,6 +22,8 @@ import {OAppConfig} from "./OAppConfig.sol";
 ///      Storage: slots 0-6 and the first 39 gap slots match the previous implementation.
 ///      `pushCredit` occupies the former last gap slot (46). Peers, endpoint, owner,
 ///      delegate, and localEid are untouched by an upgrade.
+///      `allowInitializePath` lets EndpointV2 verify the first return message on a path
+///      whose peer is already set (destination twin). No new storage.
 contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, IERC721Receiver, IOAppReceiver {
     using SwapPayload for SwapPayload.LockMintPayload;
     using SwapPayload for SwapPayload.UnlockBurnPayload;
@@ -128,14 +130,48 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         require(ok, "refund failed");
     }
 
+    /// @dev LayerZero EndpointV2 origin. Field order is the wire ABI. Not stored.
+    struct LzOrigin {
+        uint32 srcEid;
+        bytes32 sender;
+        uint64 nonce;
+    }
+
     function lzReceive(
         uint32 srcEid,
         bytes32 sender,
-        bytes32,
+        bytes32 guid,
         bytes calldata message,
         bytes calldata
     ) external payable override nonReentrant {
         if (msg.sender != address(endpoint)) revert OnlyEndpoint();
+        _receiveUnlock(srcEid, sender, guid, message);
+    }
+
+    /// @notice EndpointV2 delivery. Selector matches ILayerZeroReceiver.lzReceive.
+    function lzReceive(
+        LzOrigin calldata origin,
+        bytes32 guid,
+        bytes calldata message,
+        address,
+        bytes calldata
+    ) external payable nonReentrant {
+        if (msg.sender != address(endpoint)) revert OnlyEndpoint();
+        _receiveUnlock(origin.srcEid, origin.sender, guid, message);
+    }
+
+    /// @notice First message on a path may be verified only if that sender is the configured peer.
+    /// @dev True only when `origin.sender == peers[origin.srcEid]` and the sender is non-zero.
+    function allowInitializePath(LzOrigin calldata origin) external view returns (bool) {
+        return origin.sender != bytes32(0) && origin.sender == peers[origin.srcEid];
+    }
+
+    /// @notice Unordered channel. Executors treat 0 as "do not gate on nonce".
+    function nextNonce(uint32, bytes32) external pure returns (uint64) {
+        return 0;
+    }
+
+    function _receiveUnlock(uint32 srcEid, bytes32 sender, bytes32, bytes calldata message) internal {
         if (peers[srcEid] != sender) revert NotPeer(srcEid, sender);
 
         uint8 action = SwapPayload.peekAction(message);

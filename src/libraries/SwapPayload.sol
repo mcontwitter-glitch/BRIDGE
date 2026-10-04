@@ -47,6 +47,23 @@ library SwapPayload {
             abi.decode(data, (uint8, address, uint256, address, uint32, bytes32));
     }
 
+    /// @dev Solana recipient is a 32-byte address, not an EVM address.
+    struct LockMintSolanaPayload {
+        uint8 action;
+        address collection;
+        uint256 tokenId;
+        string tokenURI;
+        bytes32 solanaRecipient;
+        uint32 originEid;
+        bytes32 lockId;
+    }
+
+    function encodeLockMintSolana(LockMintSolanaPayload memory p) internal pure returns (bytes memory) {
+        return abi.encode(
+            p.action, p.collection, p.tokenId, p.tokenURI, p.solanaRecipient, p.originEid, p.lockId
+        );
+    }
+
     function peekAction(bytes memory data) internal pure returns (uint8 action) {
         (action) = abi.decode(data, (uint8));
     }

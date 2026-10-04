@@ -30,7 +30,7 @@ contract DeployDest is Script {
             console2.log("MockTwinCollection:", twin);
         }
 
-        NftTwinMinter minter = new NftTwinMinter(endpointAddr, eid, twin);
+        NftTwinMinter minter = new NftTwinMinter(endpointAddr, eid);
         console2.log("NftTwinMinter:", address(minter));
         console2.log("DEST_EID:", eid);
 
