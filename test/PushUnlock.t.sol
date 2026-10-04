@@ -112,4 +112,45 @@ contract PushUnlockTest is Test {
         uint256 nativeFee = minter.quoteUnlock(lockId, alice, OPTS).nativeFee;
         assertEq(nativeFee, 0.001 ether);
     }
+
+    function test_allowInitializePathOnlyConfiguredPeer() public view {
+        NftTwinMinterUpgradeable.LzOrigin memory src = NftTwinMinterUpgradeable.LzOrigin({
+            srcEid: ChainIds.ABSTRACT_EID,
+            sender: bytes32(uint256(uint160(vault))),
+            nonce: 1
+        });
+        assertTrue(minter.allowInitializePath(src));
+        src.sender = bytes32(uint256(uint160(alice)));
+        assertFalse(minter.allowInitializePath(src));
+        src.sender = bytes32(0);
+        assertFalse(minter.allowInitializePath(src));
+        src.srcEid = ChainIds.ETHEREUM_EID;
+        src.sender = bytes32(uint256(uint160(vault)));
+        assertFalse(minter.allowInitializePath(src));
+        assertEq(minter.nextNonce(ChainIds.ABSTRACT_EID, bytes32(uint256(uint160(vault)))), 0);
+    }
+
+    function test_endpointLzReceiveMintsTwin() public {
+        bytes32 lockId = keccak256("lock-3004");
+        bytes memory message = SwapPayload.encodeLockMint(
+            SwapPayload.LockMintPayload({
+                action: SwapPayload.ACTION_LOCK_MINT,
+                collection: address(origin),
+                tokenId: 3004,
+                tokenURI: "ipfs://Qm/3004",
+                recipient: alice,
+                originEid: ChainIds.ABSTRACT_EID,
+                lockId: lockId
+            })
+        );
+        NftTwinMinterUpgradeable.LzOrigin memory src = NftTwinMinterUpgradeable.LzOrigin({
+            srcEid: ChainIds.ABSTRACT_EID,
+            sender: bytes32(uint256(uint160(vault))),
+            nonce: 1
+        });
+        vm.prank(address(ep));
+        minter.lzReceive(src, bytes32(uint256(1)), message, address(this), "");
+        assertEq(twin.ownerOf(3004), alice);
+        assertTrue(minter.minted(lockId));
+    }
 }

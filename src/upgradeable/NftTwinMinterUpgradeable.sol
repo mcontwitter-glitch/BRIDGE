@@ -22,7 +22,16 @@ import {OAppConfig} from "./OAppConfig.sol";
 ///      Storage: slots 0-7 and the first 39 gap slots match the previous implementation.
 ///      `pushCredit` occupies the former last gap slot (47). Peers, endpoint, owner,
 ///      delegate, and localEid are untouched by an upgrade.
+///      `allowInitializePath` lets EndpointV2 verify the first message on a path whose
+///      peer is already set (Abstract vault on eid 30324). No new storage.
 contract NftTwinMinterUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, IERC721Receiver, IOAppReceiver {
+    /// @dev LayerZero EndpointV2 origin. Field order is the wire ABI. Not stored.
+    struct LzOrigin {
+        uint32 srcEid;
+        bytes32 sender;
+        uint64 nonce;
+    }
+
     uint256 private _reentrancyStatus;
     uint32 public localEid;
 
@@ -95,11 +104,38 @@ contract NftTwinMinterUpgradeable is Initializable, OAppConfig, UUPSUpgradeable,
     function lzReceive(
         uint32 srcEid,
         bytes32 sender,
-        bytes32,
+        bytes32 guid,
         bytes calldata message,
         bytes calldata
     ) external payable override nonReentrant {
         if (msg.sender != address(endpoint)) revert OnlyEndpoint();
+        _receiveLockMint(srcEid, sender, guid, message);
+    }
+
+    /// @notice EndpointV2 delivery. Selector matches ILayerZeroReceiver.lzReceive.
+    function lzReceive(
+        LzOrigin calldata origin,
+        bytes32 guid,
+        bytes calldata message,
+        address,
+        bytes calldata
+    ) external payable nonReentrant {
+        if (msg.sender != address(endpoint)) revert OnlyEndpoint();
+        _receiveLockMint(origin.srcEid, origin.sender, guid, message);
+    }
+
+    /// @notice First message on a path may be verified only if that sender is the configured peer.
+    /// @dev The Abstract vault (eid 30324) is that peer. A zero peer or any other sender returns false.
+    function allowInitializePath(LzOrigin calldata origin) external view returns (bool) {
+        return origin.sender != bytes32(0) && peers[origin.srcEid] == origin.sender;
+    }
+
+    /// @notice Unordered channel. Executors treat 0 as "do not gate on nonce".
+    function nextNonce(uint32, bytes32) external pure returns (uint64) {
+        return 0;
+    }
+
+    function _receiveLockMint(uint32 srcEid, bytes32 sender, bytes32, bytes calldata message) internal {
         if (peers[srcEid] != sender) revert NotPeer(srcEid, sender);
 
         uint8 action = SwapPayload.peekAction(message);
