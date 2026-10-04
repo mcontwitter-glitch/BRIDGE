@@ -119,6 +119,38 @@ contract PushLockTest is Test {
         assertEq(nft.ownerOf(tokenId), alice);
     }
 
+    function test_returnLockedSendsOnlyToDepositor() public {
+        uint256 tokenId = nft.mint(alice, "ipfs://Qm/ret");
+        vm.startPrank(alice);
+        vault.prepayPush{value: 0.001 ether}(address(nft), tokenId);
+        nft.safeTransferFrom(alice, address(vault), tokenId, _pushData(bob));
+        vm.stopPrank();
+        bytes32 lockId = vault.activeLockId(address(nft), tokenId);
+        assertEq(nft.ownerOf(tokenId), address(vault));
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.returnLocked(lockId);
+
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit NftLockVaultUpgradeable.NftUnlocked(lockId, address(nft), tokenId, alice);
+        vault.returnLocked(lockId);
+
+        assertEq(nft.ownerOf(tokenId), alice);
+        (address collection, uint256 lockedId, address owner, uint32 destEid,, bool active) = vault.locks(lockId);
+        assertEq(collection, address(nft));
+        assertEq(lockedId, tokenId);
+        assertEq(owner, alice);
+        assertEq(destEid, ChainIds.BASE_EID);
+        assertFalse(active);
+        assertEq(vault.activeLockId(address(nft), tokenId), bytes32(0));
+        // path hooks stay in place
+        assertEq(vault.nextNonce(ChainIds.BASE_EID, bytes32(uint256(uint160(peer)))), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(NftLockVaultUpgradeable.LockNotActive.selector, lockId));
+        vault.returnLocked(lockId);
+    }
+
     function test_unlockSendsToBuyerNotOriginalBridger() public {
         uint256 tokenId = nft.mint(alice, "ipfs://Qm/4");
         vm.startPrank(alice);

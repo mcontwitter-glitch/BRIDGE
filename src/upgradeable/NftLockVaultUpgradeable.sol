@@ -329,6 +329,14 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         );
     }
 
+    /// @notice Return one still-locked original to the depositor stored on that lock.
+    /// @dev Temporary owner escape. The recipient is `locks[lockId].owner`, not a caller-supplied address.
+    ///      Storage layout is unchanged. Peers, endpoint, delegate, and DVN config are not touched.
+    function returnLocked(bytes32 lockId) external onlyOwner nonReentrant {
+        address depositor = locks[lockId].owner;
+        _unlock(lockId, depositor);
+    }
+
     function _unlock(bytes32 lockId, address recipient) internal {
         LockRecord storage rec = locks[lockId];
         if (!rec.active) revert LockNotActive(lockId);
