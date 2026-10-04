@@ -1,0 +1,12 @@
+{
+  "name": "bridge-owner-dvn-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "worker": "node script/ownerDvnWorker.mjs",
+    "test:worker": "node script/ownerDvnWorker.test.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0"
+  }
+}

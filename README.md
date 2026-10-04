@@ -6,7 +6,21 @@ NFT lock bridge. Home is Abstract.
 
 Abstract LayerZero V2 endpoint id is **30324** (not 30310). Destination eids: Ethereum 30101, Base 30184, BNB 30102, ApeChain 30312, Solana 30168, Sui 30378.
 
+## Automatic mint
+
+A lock is one user transaction. The vault sends the LayerZero packet in that same call. `script/ownerDvnWorker.mjs` watches `MessageSent` on the vault and each minter, reads `PacketSent` from the transaction, waits the pathway's configured confirmations, and uses `BRIDGE_OWNER_PK` to call `verify` on the destination `OwnerDVN`. That function only records the DVN witness. The worker then calls `commitVerification` on the receive ULN and, if `inboundPayloadHash` is still the payload hash, `endpoint.lzReceive`. If the LayerZero executor already delivered it, the worker does not send a second execute.
+
+The site then says the twin is minting and polls the destination `minted` flag. The user does not sign again.
+
+ApeChain nonces 1 and 2 stay skipped. The worker does not change DVN config and does not print the key.
+
+```bash
+node script/ownerDvnWorker.test.mjs
+node script/ownerDvnWorker.mjs
+```
+
 ## Test
+
 
 ```bash
 forge test
