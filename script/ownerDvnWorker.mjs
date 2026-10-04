@@ -89,7 +89,7 @@ export const CHAINS = [
     key: "bnb",
     chainId: 56,
     eid: 30102,
-    rpc: ["https://bsc-dataseed.binance.org", "https://bsc-dataseed1.binance.org"],
+    rpc: ["https://bsc.publicnode.com", "https://bsc-rpc.publicnode.com", "https://bsc-dataseed.binance.org"],
     endpoint: "0x1a44076050125825900e736c501f859c50fE728c",
     oapp: "0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f",
     dvn: "0xdd3e6cc04168bcfc1acae5e70748618c5b38092b",
