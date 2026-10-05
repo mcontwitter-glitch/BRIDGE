@@ -2,12 +2,12 @@
   "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
   "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
-    "30101": "0x56De702bEDa3C03e26d13d5475bCA5b365F89767",
-    "30102": "0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B",
-    "30184": "0x0a3D1dEd83B443399073537eCd6d4040dD707731",
-    "30312": "0x8485e28276051aB947197775D57E7dA702e8f864",
+    "30101": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+    "30102": "0x8395b0014d95be967189547faa6065c30dea0e85",
+    "30184": "0x56de702beda3c03e26d13d5475bca5b365f89767",
+    "30312": "0x8395b0014d95be967189547faa6065c30dea0e85",
     "30324": "0xcdc640614d511ee4811b522650b1c5c90b59ddbc",
-    "30416": "0x011C25b6ced570E01772e3C3F7217eEE146106Af"
+    "30416": "0x0a3d1ded83b443399073537ecd6d4040dd707731"
   },
   "chains": {
     "1": {
@@ -81,6 +81,5 @@
   },
   "lzReceiveGas": 1,
   "lockPaused": false,
-  "returnPaused": true,
-  "returnPausedReason": "Returning twins to Abstract is paused while the verifiers on the other chains are upgraded. Bridging out of Abstract works."
+  "returnPaused": false
 }
