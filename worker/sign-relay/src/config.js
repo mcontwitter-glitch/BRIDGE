@@ -1,0 +1,65 @@
+// Generated from docs/dvn.json by npm run sync-config. Do not edit.
+export default {
+  "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
+  "signRelayUrl": "https://bridge-sign-relay.YOUR-SUBDOMAIN.workers.dev/api/sign-relay",
+  "byEid": {
+    "30101": "0x56De702bEDa3C03e26d13d5475bCA5b365F89767",
+    "30102": "0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B",
+    "30184": "0x0a3D1dEd83B443399073537eCd6d4040dD707731",
+    "30312": "0x8485e28276051aB947197775D57E7dA702e8f864",
+    "30324": "0xa101a956712cca75ef10de23f832509708daef1e",
+    "30416": "0x011C25b6ced570E01772e3C3F7217eEE146106Af"
+  },
+  "chains": {
+    "1": {
+      "name": "ethereum",
+      "eid": 30101,
+      "rpc": [
+        "https://ethereum.publicnode.com",
+        "https://ethereum.reth.rs/rpc"
+      ],
+      "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
+    },
+    "56": {
+      "name": "bnb",
+      "eid": 30102,
+      "rpc": [
+        "https://bsc-dataseed1.bnbchain.org",
+        "https://bsc-rpc.publicnode.com"
+      ],
+      "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
+    },
+    "2741": {
+      "name": "abstract",
+      "eid": 30324,
+      "rpc": [
+        "https://api.mainnet.abs.xyz"
+      ],
+      "endpoint": "0x5c6cfF4b7C49805F8295Ff73C204ac83f3bC4AE7"
+    },
+    "4663": {
+      "name": "robinhood",
+      "eid": 30416,
+      "rpc": [
+        "https://rpc.mainnet.chain.robinhood.com"
+      ],
+      "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
+    },
+    "8453": {
+      "name": "base",
+      "eid": 30184,
+      "rpc": [
+        "https://mainnet.base.org"
+      ],
+      "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
+    },
+    "33139": {
+      "name": "apechain",
+      "eid": 30312,
+      "rpc": [
+        "https://rpc.apechain.com/http"
+      ],
+      "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
+    }
+  }
+};

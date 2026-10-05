@@ -1,0 +1,23 @@
+{
+  "name": "bridge-sign-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/sign-relay.test.mjs",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "sync-config": "node -e \"const fs=require('node:fs');fs.writeFileSync('src/config.js','// Generated from docs/dvn.json by npm run sync-config. Do not edit.\\nexport default '+JSON.stringify(JSON.parse(fs.readFileSync('../../docs/dvn.json','utf8')),null,2)+';\\n')\"",
+    "pretest": "npm run sync-config",
+    "predeploy": "npm run sync-config",
+    "predeploy:dry-run": "npm run sync-config"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.112.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

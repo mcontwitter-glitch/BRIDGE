@@ -39,6 +39,8 @@ Deployed `ExecutorDVN` (required DVN for send and receive, both directions). Sig
 
 `script/broadcastRelayDvn.mjs <chain>` deployed and wired these with `BRIDGE_OWNER_PK` and `BRIDGE_RELAY_SIGNER` (the address). Fork check against the deployed Base bytecode: `test/fork/RelayDeliveryFork.t.sol` (runs only with its `RELAY_FORK_*` env).
 
+The mint signature HTTP endpoint is `worker/sign-relay` (Cloudflare Worker, viem). See that folder's README. Set `docs/dvn.json` `signRelayUrl` after `wrangler deploy`. Do not put the private key in the Worker source — use `wrangler secret put BRIDGE_RELAY_SIGNER_PK`.
+
 ## Test
 
 

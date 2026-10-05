@@ -1,0 +1,7 @@
+name = "bridge-sign-relay"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Do not hardcode account_id. Set CLOUDFLARE_ACCOUNT_ID or log in with `wrangler login`.
+# Put the signer with: wrangler secret put BRIDGE_RELAY_SIGNER_PK

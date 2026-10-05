@@ -5,7 +5,9 @@
   "scripts": {
     "worker": "node script/ownerDvnWorker.mjs",
     "test:worker": "node script/ownerDvnWorker.test.mjs",
-    "test:sign": "node script/signRelay.test.mjs"
+    "test:sign": "node script/signRelay.test.mjs",
+    "test:sign-relay": "npm --prefix worker/sign-relay test",
+    "sign-relay:dry-run": "npm --prefix worker/sign-relay run deploy:dry-run"
   },
   "dependencies": {
     "ethers": "^6.17.0"

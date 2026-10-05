@@ -61,15 +61,19 @@
       throw new Error("The lock transaction has no PacketSent log, so there is nothing to mint.");
     }
     onStep(step, "active", "Requesting the one-shot mint signature…");
+    var cfg = await fetch("/dvn.json").then(function (r) {
+      if (!r.ok) throw new Error("dvn.json is missing");
+      return r.json();
+    });
+    var signUrl = (cfg.signRelayUrl || "/api/sign-relay").replace(/\/$/, "");
     var body;
     try {
-      var res = await fetch("/api/sign-relay", {
+      var res = await fetch(signUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           txHash: txHash,
           srcChainId: opts.srcChainId,
-          encodedPacket: localPacket,
         }),
       });
       var text = await res.text();
@@ -80,7 +84,7 @@
       throw new Error(
         "Could not get the mint signature (" +
           why +
-          "). This site cannot hold the signer key. Where the site runs, set BRIDGE_RELAY_SIGNER_PK and answer POST /api/sign-relay with `node script/signRelay.mjs --tx " +
+          "). Deploy worker/sign-relay (BRIDGE_RELAY_SIGNER_PK secret) and set docs/dvn.json signRelayUrl, or run `node script/signRelay.mjs --tx " +
           txHash +
           " --src-chain " +
           opts.srcChainId +
@@ -88,12 +92,9 @@
       );
     }
     if (!body || !body.signature || !body.encodedPacket) throw new Error("The signer did not return a packet and signature.");
-    var cfg = await fetch("/dvn.json").then(function (r) {
-      if (!r.ok) throw new Error("dvn.json is missing");
-      return r.json();
-    });
-    var dvn = cfg.byEid && cfg.byEid[String(body.dstEid || dstEid(body.encodedPacket))];
+    var dvn = body.verifier || (cfg.byEid && cfg.byEid[String(body.dstEid || dstEid(body.encodedPacket))]);
     if (!dvn) throw new Error("No destination verifier is configured for this route.");
+    if (body.dstChainId) opts.destChainId = Number(body.dstChainId);
     onStep(step, "active", "Switch to the destination chain and sign the mint. You pay this gas.");
     if (opts.switchChain) await opts.switchChain({ chainId: opts.destChainId });
     else if (window.ethereum) {
