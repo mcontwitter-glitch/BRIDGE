@@ -202,6 +202,44 @@
         return 0n;
       }
     },
+    funds: async function (o) {
+      // Plain "not enough ETH" check before any wallet prompt, so wallets never
+      // show their huge fake gas estimate when the balance is too low.
+      var cfg = await loadCfg();
+      var chain = cfg.chains && cfg.chains[String(o.chainId)];
+      if (!chain || !chain.rpc || !o.user) return;
+      async function rpc(method, params) {
+        for (var i = 0; i < chain.rpc.length; i++) {
+          try {
+            var r = await fetch(chain.rpc[i], {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }),
+            });
+            var j = await r.json();
+            if (j && j.result) return BigInt(j.result);
+          } catch (e) {}
+        }
+        return null;
+      }
+      var bal = await rpc("eth_getBalance", [o.user, "latest"]);
+      if (bal === null) return; // RPC down: don't block, the wallet still checks
+      var gp = await rpc("eth_gasPrice", []);
+      var fee = BigInt(o.fee || 0);
+      var credit = BigInt(o.credit || 0);
+      var owed = fee > credit ? fee - credit : 0n;
+      var gas = gp === null ? 0n : (gp * 3000000n * 3n) / 2n; // fee payment + NFT transfer, with headroom
+      var need = owed + gas;
+      if (bal < need) {
+        var sym = SYMBOL[o.chainId] || "native";
+        var where = chain.name ? chain.name.charAt(0).toUpperCase() + chain.name.slice(1) : "this chain";
+        throw new Error(
+          "Not enough " + sym + " on " + where + ". This bridge needs about " + fmt(need) + " " + sym +
+            " (bridge fee " + fmt(owed) + " + gas), but this wallet has " + fmt(bal) + " " + sym +
+            ". Add a little " + sym + " on " + where + " and try again. Nothing was sent.",
+        );
+      }
+    },
     simulate: async function (o) {
       if (!o.readContract) throw new Error("Cannot check the transfer without a read client.");
       try {
