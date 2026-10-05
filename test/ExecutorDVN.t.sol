@@ -22,7 +22,7 @@ contract MockEndpoint is IEndpointExec {
         eid = eid_;
     }
 
-    function isSendLibrary(address lib) external view returns (bool) {
+    function isRegisteredLibrary(address lib) external view returns (bool) {
         return lib == sendLib;
     }
 

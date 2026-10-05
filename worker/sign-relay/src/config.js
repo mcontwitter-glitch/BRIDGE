@@ -7,7 +7,7 @@ export default {
     "30102": "0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B",
     "30184": "0x0a3D1dEd83B443399073537eCd6d4040dD707731",
     "30312": "0x8485e28276051aB947197775D57E7dA702e8f864",
-    "30324": "0xa101a956712cca75ef10de23f832509708daef1e",
+    "30324": "0xcdc640614d511ee4811b522650b1c5c90b59ddbc",
     "30416": "0x011C25b6ced570E01772e3C3F7217eEE146106Af"
   },
   "chains": {
@@ -71,5 +71,17 @@ export default {
       ],
       "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
     }
-  }
+  },
+  "maxNativeFee": {
+    "1": "10000000000000000",
+    "56": "30000000000000000",
+    "2741": "10000000000000000",
+    "4663": "10000000000000000",
+    "8453": "10000000000000000",
+    "33139": "150000000000000000000"
+  },
+  "lzReceiveGas": 1,
+  "lockPaused": false,
+  "returnPaused": true,
+  "returnPausedReason": "Returning twins to Abstract is paused while the verifiers on the other chains are upgraded. Bridging out of Abstract works."
 };

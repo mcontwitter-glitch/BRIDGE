@@ -174,7 +174,9 @@
   var bridgeGuard = {
     checkFee: async function (o) {
       var cfg = await loadCfg();
-      if (cfg.sendPaused) throw new Error(cfg.sendPausedReason || "Bridging is paused.");
+      var isLock = Number(o.chainId) === 2741;
+      if (isLock && (cfg.lockPaused || cfg.sendPaused)) throw new Error(cfg.lockPausedReason || cfg.sendPausedReason || "Bridging is paused.");
+      if (!isLock && cfg.returnPaused) throw new Error(cfg.returnPausedReason || "Returns are paused.");
       var cap = DEFAULT_CAP;
       if (cfg.maxNativeFee && cfg.maxNativeFee[String(o.chainId)]) cap = BigInt(cfg.maxNativeFee[String(o.chainId)]);
       var fee = BigInt(o.fee);

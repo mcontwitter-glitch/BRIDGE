@@ -2,23 +2,14 @@
   "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
   "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
-    "30324": "0xa101a956712cca75ef10de23f832509708daef1e",
     "30101": "0x56De702bEDa3C03e26d13d5475bCA5b365F89767",
-    "30184": "0x0a3D1dEd83B443399073537eCd6d4040dD707731",
     "30102": "0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B",
+    "30184": "0x0a3D1dEd83B443399073537eCd6d4040dD707731",
     "30312": "0x8485e28276051aB947197775D57E7dA702e8f864",
+    "30324": "0xcdc640614d511ee4811b522650b1c5c90b59ddbc",
     "30416": "0x011C25b6ced570E01772e3C3F7217eEE146106Af"
   },
   "chains": {
-    "2741": {
-      "name": "abstract",
-      "eid": 30324,
-      "rpc": [
-        "https://api.mainnet.abs.xyz",
-        "https://abstract.drpc.org"
-      ],
-      "endpoint": "0x5c6cfF4b7C49805F8295Ff73C204ac83f3bC4AE7"
-    },
     "1": {
       "name": "ethereum",
       "eid": 30101,
@@ -27,18 +18,6 @@
         "https://ethereum.reth.rs/rpc",
         "https://eth.drpc.org",
         "https://1rpc.io/eth"
-      ],
-      "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
-    },
-    "8453": {
-      "name": "base",
-      "eid": 30184,
-      "rpc": [
-        "https://mainnet.base.org",
-        "https://base-rpc.publicnode.com",
-        "https://base.drpc.org",
-        "https://1rpc.io/base",
-        "https://base.llamarpc.com"
       ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
@@ -53,14 +32,14 @@
       ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
-    "33139": {
-      "name": "apechain",
-      "eid": 30312,
+    "2741": {
+      "name": "abstract",
+      "eid": 30324,
       "rpc": [
-        "https://rpc.apechain.com/http",
-        "https://apechain.drpc.org"
+        "https://api.mainnet.abs.xyz",
+        "https://abstract.drpc.org"
       ],
-      "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
+      "endpoint": "0x5c6cfF4b7C49805F8295Ff73C204ac83f3bC4AE7"
     },
     "4663": {
       "name": "robinhood",
@@ -69,17 +48,39 @@
         "https://rpc.mainnet.chain.robinhood.com"
       ],
       "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
+    },
+    "8453": {
+      "name": "base",
+      "eid": 30184,
+      "rpc": [
+        "https://mainnet.base.org",
+        "https://base-rpc.publicnode.com",
+        "https://base.drpc.org",
+        "https://1rpc.io/base",
+        "https://base.llamarpc.com"
+      ],
+      "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
+    },
+    "33139": {
+      "name": "apechain",
+      "eid": 30312,
+      "rpc": [
+        "https://rpc.apechain.com/http",
+        "https://apechain.drpc.org"
+      ],
+      "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
     }
   },
-  "sendPaused": true,
-  "sendPausedReason": "Bridging is paused: the new verifiers reject LayerZero sends (assignJob calls a function the endpoint does not have), so every lock would revert. Nothing was charged. A fixed verifier is being deployed.",
   "maxNativeFee": {
-    "2741": "10000000000000000",
     "1": "10000000000000000",
-    "8453": "10000000000000000",
-    "4663": "10000000000000000",
     "56": "30000000000000000",
+    "2741": "10000000000000000",
+    "4663": "10000000000000000",
+    "8453": "10000000000000000",
     "33139": "150000000000000000000"
   },
-  "lzReceiveGas": 1
+  "lzReceiveGas": 1,
+  "lockPaused": false,
+  "returnPaused": true,
+  "returnPausedReason": "Returning twins to Abstract is paused while the verifiers on the other chains are upgraded. Bridging out of Abstract works."
 }

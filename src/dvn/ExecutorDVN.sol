@@ -72,7 +72,7 @@ contract ExecutorDVN is ILayerZeroDVN {
 
     /// @inheritdoc ILayerZeroDVN
     function assignJob(AssignJobParam calldata param, bytes calldata) external payable returns (uint256 fee) {
-        if (!IEndpointView(endpoint).isSendLibrary(msg.sender)) revert NotMessageLib();
+        if (!IEndpointView(endpoint).isRegisteredLibrary(msg.sender)) revert NotMessageLib();
         if (IEndpointView(endpoint).getSendLibrary(param.sender, param.dstEid) != msg.sender) revert NotMessageLib();
         bytes32 key = keccak256(param.packetHeader);
         bytes32 existing = packetHash[key];
@@ -162,7 +162,7 @@ contract ExecutorDVN is ILayerZeroDVN {
 
 interface IEndpointView {
     function eid() external view returns (uint32);
-    function isSendLibrary(address lib) external view returns (bool);
+    function isRegisteredLibrary(address lib) external view returns (bool);
     function getSendLibrary(address sender, uint32 dstEid) external view returns (address lib);
 }
 
