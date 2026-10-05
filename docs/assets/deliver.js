@@ -138,4 +138,93 @@
   }
 
   window.bridgeDeliverMint = bridgeDeliverMint;
+
+  /* Safety guard used by the lock / unlock flow before any wallet prompt. */
+  var cfgPromise = null;
+  function loadCfg() {
+    if (!cfgPromise) {
+      cfgPromise = fetch("/dvn.json", { cache: "no-store" }).then(function (r) {
+        if (!r.ok) throw new Error("dvn.json is missing");
+        return r.json();
+      });
+    }
+    return cfgPromise;
+  }
+  var DEFAULT_CAP = 10000000000000000n; // 0.01 native
+  var SYMBOL = { 2741: "ETH", 1: "ETH", 8453: "ETH", 4663: "ETH", 56: "BNB", 33139: "APE" };
+  function fmt(wei) {
+    var w = BigInt(wei);
+    var whole = w / 1000000000000000000n;
+    var frac = (w % 1000000000000000000n).toString().padStart(18, "0").slice(0, 6);
+    return whole.toString() + "." + frac;
+  }
+  var CREDIT_ABI = [
+    {
+      type: "function",
+      name: "pushCredit",
+      stateMutability: "view",
+      inputs: [
+        { name: "depositor", type: "address" },
+        { name: "collection", type: "address" },
+        { name: "tokenId", type: "uint256" },
+      ],
+      outputs: [{ name: "", type: "uint256" }],
+    },
+  ];
+  var bridgeGuard = {
+    checkFee: async function (o) {
+      var cfg = await loadCfg();
+      if (cfg.sendPaused) throw new Error(cfg.sendPausedReason || "Bridging is paused.");
+      var cap = DEFAULT_CAP;
+      if (cfg.maxNativeFee && cfg.maxNativeFee[String(o.chainId)]) cap = BigInt(cfg.maxNativeFee[String(o.chainId)]);
+      var fee = BigInt(o.fee);
+      if (fee > cap) {
+        var sym = SYMBOL[o.chainId] || "native";
+        throw new Error(
+          "Quoted LayerZero fee " + fmt(fee) + " " + sym + " is above the safety cap of " + fmt(cap) + " " + sym + ". Not submitting.",
+        );
+      }
+      return fee;
+    },
+    credit: async function (o) {
+      if (!o.readContract) return 0n;
+      try {
+        var v = await o.readContract({
+          address: o.contract,
+          abi: CREDIT_ABI,
+          functionName: "pushCredit",
+          args: [o.user, o.collection, BigInt(o.tokenId)],
+        });
+        return BigInt(v || 0);
+      } catch (err) {
+        return 0n;
+      }
+    },
+    simulate: async function (o) {
+      if (!o.readContract) throw new Error("Cannot check the transfer without a read client.");
+      try {
+        await o.readContract({
+          address: o.address,
+          abi: o.abi,
+          functionName: "safeTransferFrom",
+          args: o.args,
+          account: o.account,
+        });
+      } catch (err) {
+        var why = (err && (err.shortMessage || err.message)) || String(err);
+        throw new Error(
+          "This transfer would revert on-chain (" +
+            why.split("\n")[0].slice(0, 160) +
+            "), so you were not asked to sign it and nothing moved. Any fee you prepaid stays credited to you and is used on the next try; withdrawPushCredit(" +
+            o.collection +
+            ", " +
+            String(o.tokenId) +
+            ") on " +
+            o.contract +
+            " returns it.",
+        );
+      }
+    },
+  };
+  window.bridgeGuard = bridgeGuard;
 })();
