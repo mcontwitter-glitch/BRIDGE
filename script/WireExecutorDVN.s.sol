@@ -43,15 +43,25 @@ contract WireExecutorDVN is Script {
         for (uint256 i = 0; i < n; i++) {
             (sendLibs[i], receiveLibs[i], maxSizes[i], sendConfs[i], recvConfs[i]) =
                 _read(endpoint, path.oapp, path.eids[i], path.oldDvn, path.executor);
+            if (sendConfs[i] != _expect(path.eids[i], true)) revert ConfirmationMismatch(path.eids[i], sendConfs[i], _expect(path.eids[i], true));
+            if (recvConfs[i] != _expect(path.eids[i], false)) revert ConfirmationMismatch(path.eids[i], recvConfs[i], _expect(path.eids[i], false));
+            if (maxSizes[i] != 10000) revert ConfirmationMismatch(path.eids[i], maxSizes[i], 10000);
             console2.log("eid", path.eids[i]);
             console2.log("sendConf", sendConfs[i]);
             console2.log("recvConf", recvConfs[i]);
         }
 
+        address signer = vm.envAddress("BRIDGE_RELAY_SIGNER");
+        if (signer == address(0)) revert SignerZero();
+        console2.log("signer", signer);
+
         vm.startBroadcast(pk);
         address dvn = vm.envOr("EXECUTOR_DVN", address(0));
         if (dvn == address(0)) {
-            dvn = address(new ExecutorDVN(endpoint, receiveUln, path.executor));
+            dvn = address(new ExecutorDVN(endpoint, receiveUln, path.executor, owner, signer));
+        }
+        if (ExecutorDVN(dvn).signer() != signer) {
+            ExecutorDVN(dvn).setSigner(signer);
         }
         console2.log("executorDvn", dvn);
         for (uint256 i = 0; i < n; i++) {
@@ -99,42 +109,42 @@ contract WireExecutorDVN is Script {
             eids[4] = 30416;
             path = Pathway({
                 oapp: 0xe81DdAB112137112B8FeeB853e22BC4c38F999e5,
-                oldDvn: 0x65B7C47dDeCc27Bf8f7B26EE46C794e33219C889,
+                oldDvn: 0x565D9E3BA522de1090C645f372C2FF0Df67a9b42,
                 executor: 0x643E1471f37c4680Df30cF0C540Cd379a0fF58A5,
                 eids: eids
             });
         } else if (block.chainid == 1) {
             path = Pathway({
                 oapp: 0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B,
-                oldDvn: 0x011C25b6ced570E01772e3C3F7217eEE146106Af,
+                oldDvn: 0x0a3D1dEd83B443399073537eCd6d4040dD707731,
                 executor: 0x173272739Bd7Aa6e4e214714048a9fE699453059,
                 eids: one
             });
         } else if (block.chainid == 8453) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B,
+                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
                 executor: 0x2CCA08ae69E0C44b18a57Ab2A87644234dAebaE4,
                 eids: one
             });
         } else if (block.chainid == 56) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B,
+                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
                 executor: 0x3ebD570ed38B1b3b4BC886999fcF507e9D584859,
                 eids: one
             });
         } else if (block.chainid == 33139) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xce57DE0119f9dD6CDF53a7696DE252cAFA4aEE3d,
+                oldDvn: 0x2e57bb5c4c78F9BeDcdfaE9a8eeABE0F6f6E3FB4,
                 executor: 0xcCE466a522984415bC91338c232d98869193D46e,
                 eids: one
             });
         } else if (block.chainid == 4663) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B,
+                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
                 executor: 0x4208D6E27538189bB48E603D6123A94b8Abe0A0b,
                 eids: one
             });
@@ -146,6 +156,27 @@ contract WireExecutorDVN is Script {
     error UnknownChain(uint256 chainId);
     error ExecutorMismatch(address found, address expected);
     error DvnMismatch(address found);
+    error ConfirmationMismatch(uint32 eid, uint64 found, uint64 expected);
+    error SignerZero();
+
+    function _expect(uint32 eid, bool sendSide) internal view returns (uint64) {
+        if (block.chainid == 2741) {
+            if (sendSide) return 20;
+            if (eid == 30101) return 15;
+            if (eid == 30184) return 10;
+            if (eid == 30102) return 20;
+            if (eid == 30312) return 20;
+            if (eid == 30416) return 5;
+        } else if (eid == ABSTRACT_EID) {
+            if (!sendSide) return 20;
+            if (block.chainid == 1) return 15;
+            if (block.chainid == 8453) return 10;
+            if (block.chainid == 56) return 20;
+            if (block.chainid == 33139) return 20;
+            if (block.chainid == 4663) return 5;
+        }
+        revert ConfirmationMismatch(eid, 0, 0);
+    }
 }
 
 interface IOApp {

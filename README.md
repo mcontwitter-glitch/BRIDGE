@@ -8,30 +8,36 @@ Abstract LayerZero V2 endpoint id is **30324** (not 30310). Destination eids: Et
 
 ## Automatic mint
 
-A lock is one user signature. It escrows the NFT and pays the LayerZero fee. The options in that fee include the destination `lzReceive` gas for the twin mint (12,000,000 gas). That payment is what funds delivery. A transaction on Abstract does not mint on the other chain, and it does not swap into destination gas.
+A lock is one user signature on the source chain. It escrows the NFT, pays the LayerZero fee, and the send library calls `ExecutorDVN.assignJob`, which records the payload hash.
 
-`ExecutorDVN` is the required DVN. `assignJob` records a payload hash only when the pathway send MessageLib calls it. `verifyAndCommit` hashes the packet the same way that MessageLib does (`keccak256` of the bytes after the 81-byte header). It does not take a caller-supplied hash. If this chain's MessageLib already recorded the header, the hash must match that record. Otherwise only the configured LayerZero executor, or an `ADMIN_ROLE` holder on that executor, may present the packet. The contract then calls `ReceiveUln302.verify`, `commitVerification`, and `EndpointV2.lzReceive`, which mints the twin.
+That fee does not make the stock LayerZero executor call `verifyAndCommit`. `Executor.execute302` only calls `EndpointV2.lzReceive` after the packet is already verifiable, and it never verifies this DVN. The mint is a second signature from the user, on the destination chain. The user pays that gas.
 
-`script/ownerDvnWorker.mjs` exits immediately and must not be restarted. ApeChain inbound nonces 1 and 2 stay skipped. Peers are unchanged. LayerZero Labs is not a required DVN.
+`ExecutorDVN.verifyAndCommit(encodedPacket, signature)` checks the signature when the caller is not the configured executor and not an `ADMIN_ROLE` holder on that executor. The signer signs `keccak256(abi.encode(srcEid, dstEid, payloadHash))` with a personal sign (`\x19Ethereum Signed Message:\n32`). `payloadHash` is `keccak256` of the bytes after the 81-byte packet header. A different packet does not recover to `signer`. An empty signature from a normal wallet reverts. The executor path still accepts an empty signature. On success the same transaction calls `ReceiveUln302.verify`, `commitVerification`, and `EndpointV2.lzReceive`.
 
-The stock LayerZero executor does not call `ExecutorDVN`. It waits until `ReceiveUln302.verifiable` is true, then calls `commitVerification` and `lzReceive`. `commitVerification` reverts `LZ_ULN_Verifying` until this DVN has called `verify`. The only destination call that does that without an owner key is `verifyAndCommit`, and only the configured executor or an `ADMIN_ROLE` holder on that executor may present a packet this chain did not already record. Their worker does not make that call. A destination mint therefore still needs that one destination transaction. It does not need a process on this machine.
-
-Ethereum was not upgraded. The owner balance cannot pay the deploy. Pathways that verify on Ethereum still use the old owner DVN.
-
-Deployed `ExecutorDVN` (send and receive, both directions, except Ethereum):
-
-| Chain | DVN |
-| --- | --- |
-| Abstract | `0x565D9E3BA522de1090C645f372C2FF0Df67a9b42` |
-| Base | `0xf7e5baae563b90295ac13ad199ac3c084962b09d` |
-| BNB | `0xf7e5bAaE563B90295ac13aD199aC3c084962b09D` |
-| ApeChain | `0x2e57bb5c4c78f9bedcdfae9a8eeabe0f6f6e3fb4` |
-| Robinhood | `0xf7e5baae563b90295ac13ad199ac3c084962b09d` |
+The signer key is `BRIDGE_RELAY_SIGNER_PK`. It is not in git. This machine keeps it in `/home/box/.bridge/relay-signer`. The signer never sends a transaction.
 
 ```bash
-forge test
-node script/ownerDvnWorker.test.mjs
+node script/signRelay.mjs --tx 0xLOCK_TX --src-chain 2741
 ```
+
+That command reads `PacketSent` and the `assignJob` record for that one transaction, refuses to sign if the hashes differ, prints the signature, and exits. It does not poll. Do not start `script/ownerDvnWorker.mjs`.
+
+The bridge page, after the lock receipt, reads `PacketSent` and POSTs `{ txHash, srcChainId }` to `/api/sign-relay`, then asks the wallet to switch to the destination and sign `verifyAndCommit`. GitHub Pages has no backend, so that call fails until the host that serves the site has `BRIDGE_RELAY_SIGNER_PK` and answers `/api/sign-relay` with this script. The key must be present where the site runs.
+
+ApeChain inbound nonces 1 and 2 stay skipped. Peers are unchanged. LayerZero Labs is not a required DVN. The Abstract vault was not upgraded and was not whitelisted.
+
+Deployed `ExecutorDVN` (required DVN for send and receive, both directions). Signer `0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3`. The UI reads `docs/dvn.json`.
+
+| Chain | eid | DVN |
+| --- | --- | --- |
+| Abstract | 30324 | `0xa101a956712cca75ef10de23f832509708daef1e` |
+| Ethereum | 30101 | `0x56De702bEDa3C03e26d13d5475bCA5b365F89767` |
+| Base | 30184 | `0x0a3D1dEd83B443399073537eCd6d4040dD707731` |
+| BNB | 30102 | `0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B` |
+| ApeChain | 30312 | `0x8485e28276051aB947197775D57E7dA702e8f864` |
+| Robinhood | 30416 | `0x011C25b6ced570E01772e3C3F7217eEE146106Af` |
+
+`script/broadcastRelayDvn.mjs <chain>` deployed and wired these with `BRIDGE_OWNER_PK` and `BRIDGE_RELAY_SIGNER` (the address). Fork check against the deployed Base bytecode: `test/fork/RelayDeliveryFork.t.sol` (runs only with its `RELAY_FORK_*` env).
 
 ## Test
 

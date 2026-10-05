@@ -4,3 +4,6 @@ broadcast/
 .env
 node_modules/
 script/.worker-state.json
+
+relay-signer
+.bridge/

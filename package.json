@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "worker": "node script/ownerDvnWorker.mjs",
-    "test:worker": "node script/ownerDvnWorker.test.mjs"
+    "test:worker": "node script/ownerDvnWorker.test.mjs",
+    "test:sign": "node script/signRelay.test.mjs"
   },
   "dependencies": {
     "ethers": "^6.17.0"
