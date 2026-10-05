@@ -139,7 +139,7 @@ export default {
       );
     } catch (err) {
       const message = redact(err);
-      const status = /not found|unsupported|must be|required|match|did not|PacketSent|assignJob/i.test(message)
+      const status = /not found|could not be found|unsupported|must be|required|match|did not|PacketSent|assignJob/i.test(message)
         ? 400
         : 502;
       return json(status, { error: message }, origin);

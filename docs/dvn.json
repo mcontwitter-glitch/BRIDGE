@@ -1,6 +1,6 @@
 {
   "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
-  "signRelayUrl": "https://bridge-sign-relay.YOUR-SUBDOMAIN.workers.dev/api/sign-relay",
+  "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
     "30324": "0xa101a956712cca75ef10de23f832509708daef1e",
     "30101": "0x56De702bEDa3C03e26d13d5475bCA5b365F89767",
@@ -13,37 +13,61 @@
     "2741": {
       "name": "abstract",
       "eid": 30324,
-      "rpc": ["https://api.mainnet.abs.xyz"],
+      "rpc": [
+        "https://api.mainnet.abs.xyz",
+        "https://abstract.drpc.org"
+      ],
       "endpoint": "0x5c6cfF4b7C49805F8295Ff73C204ac83f3bC4AE7"
     },
     "1": {
       "name": "ethereum",
       "eid": 30101,
-      "rpc": ["https://ethereum.publicnode.com", "https://ethereum.reth.rs/rpc"],
+      "rpc": [
+        "https://ethereum.publicnode.com",
+        "https://ethereum.reth.rs/rpc",
+        "https://eth.drpc.org",
+        "https://1rpc.io/eth"
+      ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
     "8453": {
       "name": "base",
       "eid": 30184,
-      "rpc": ["https://mainnet.base.org"],
+      "rpc": [
+        "https://mainnet.base.org",
+        "https://base-rpc.publicnode.com",
+        "https://base.drpc.org",
+        "https://1rpc.io/base",
+        "https://base.llamarpc.com"
+      ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
     "56": {
       "name": "bnb",
       "eid": 30102,
-      "rpc": ["https://bsc-dataseed1.bnbchain.org", "https://bsc-rpc.publicnode.com"],
+      "rpc": [
+        "https://bsc-dataseed1.bnbchain.org",
+        "https://bsc-rpc.publicnode.com",
+        "https://bsc.drpc.org",
+        "https://1rpc.io/bnb"
+      ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
     "33139": {
       "name": "apechain",
       "eid": 30312,
-      "rpc": ["https://rpc.apechain.com/http"],
+      "rpc": [
+        "https://rpc.apechain.com/http",
+        "https://apechain.drpc.org"
+      ],
       "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
     },
     "4663": {
       "name": "robinhood",
       "eid": 30416,
-      "rpc": ["https://rpc.mainnet.chain.robinhood.com"],
+      "rpc": [
+        "https://rpc.mainnet.chain.robinhood.com"
+      ],
       "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
     }
   }

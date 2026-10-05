@@ -1,7 +1,7 @@
 // Generated from docs/dvn.json by npm run sync-config. Do not edit.
 export default {
   "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
-  "signRelayUrl": "https://bridge-sign-relay.YOUR-SUBDOMAIN.workers.dev/api/sign-relay",
+  "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
     "30101": "0x56De702bEDa3C03e26d13d5475bCA5b365F89767",
     "30102": "0x1B02E30141eE4D21718CD5C6C4430621d5A0C33B",
@@ -16,7 +16,9 @@ export default {
       "eid": 30101,
       "rpc": [
         "https://ethereum.publicnode.com",
-        "https://ethereum.reth.rs/rpc"
+        "https://ethereum.reth.rs/rpc",
+        "https://eth.drpc.org",
+        "https://1rpc.io/eth"
       ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
@@ -25,7 +27,9 @@ export default {
       "eid": 30102,
       "rpc": [
         "https://bsc-dataseed1.bnbchain.org",
-        "https://bsc-rpc.publicnode.com"
+        "https://bsc-rpc.publicnode.com",
+        "https://bsc.drpc.org",
+        "https://1rpc.io/bnb"
       ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
@@ -33,7 +37,8 @@ export default {
       "name": "abstract",
       "eid": 30324,
       "rpc": [
-        "https://api.mainnet.abs.xyz"
+        "https://api.mainnet.abs.xyz",
+        "https://abstract.drpc.org"
       ],
       "endpoint": "0x5c6cfF4b7C49805F8295Ff73C204ac83f3bC4AE7"
     },
@@ -49,7 +54,11 @@ export default {
       "name": "base",
       "eid": 30184,
       "rpc": [
-        "https://mainnet.base.org"
+        "https://mainnet.base.org",
+        "https://base-rpc.publicnode.com",
+        "https://base.drpc.org",
+        "https://1rpc.io/base",
+        "https://base.llamarpc.com"
       ],
       "endpoint": "0x1a44076050125825900e736c501f859c50fE728c"
     },
@@ -57,7 +66,8 @@ export default {
       "name": "apechain",
       "eid": 30312,
       "rpc": [
-        "https://rpc.apechain.com/http"
+        "https://rpc.apechain.com/http",
+        "https://apechain.drpc.org"
       ],
       "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B"
     }
