@@ -366,6 +366,109 @@
     return hash;
   }
   window.finishStuckMint = finishStuckMint;
+  /* Stuck-mint finder: every NFT still sitting in the Abstract vault whose twin
+     never minted. Mints on a route must go in lock order (nonce), across all
+     holders, so the list is sorted and only the first per route is "ready". */
+  var VAULT = "0xe81DdAB112137112B8FeeB853e22BC4c38F999e5";
+  var TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+  var MINTER = { 1: "0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B", 8453: "0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f", 56: "0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f", 33139: "0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f", 4663: "0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f" };
+  function word(v) {
+    return hex(v).padStart(64, "0");
+  }
+  async function ethCallRaw(urls, to, data) {
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var r = await fetch(urls[i], {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: to, data: data }, "latest"] }),
+        });
+        var j = await r.json();
+        if (j.result !== undefined) return { ok: true, data: j.result };
+        if (j.error && (j.error.code === 3 || /revert/i.test(j.error.message || ""))) return { ok: false, data: (j.error.data && (j.error.data.data || j.error.data)) || "" };
+      } catch (e) {}
+    }
+    return null;
+  }
+  async function poolMap(items, n, fn) {
+    var out = new Array(items.length), i = 0;
+    async function run() {
+      while (i < items.length) {
+        var k = i++;
+        out[k] = await fn(items[k]);
+      }
+    }
+    var ws = [];
+    for (var w = 0; w < Math.min(n, items.length); w++) ws.push(run());
+    await Promise.all(ws);
+    return out;
+  }
+  var twinCache = {};
+  async function scanStuck(say) {
+    var cfg = await loadCfg();
+    var abs = cfg.chains["2741"].rpc;
+    var eidToChain = {};
+    Object.keys(cfg.chains).forEach(function (id) {
+      eidToChain[cfg.chains[id].eid] = Number(id);
+    });
+    say("Reading vault locks…");
+    var logs = await rpcCall(abs, "eth_getLogs", [{ fromBlock: "0x52a0000", toBlock: "latest", topics: [TRANSFER, null, "0x" + word(VAULT)] }]);
+    if (!logs) throw new Error("Couldn't read the vault's locks right now. Try again in a minute.");
+    logs = logs.filter(function (l) {
+      return l.topics.length === 4;
+    });
+    say("Checking " + logs.length + " locks…");
+    var rows = await poolMap(logs, 6, async function (l) {
+      var tokenId = BigInt(l.topics[3]);
+      var owner = await ethCallRaw(abs, l.address, "0x6352211e" + word(tokenId.toString(16)));
+      if (!owner || !owner.ok || hex(owner.data).slice(24) !== hex(VAULT)) return null; // returned already
+      var rc = await rpcCall(abs, "eth_getTransactionReceipt", [l.transactionHash]);
+      var pk = rc && packetFromReceipt(rc);
+      if (!pk) return null;
+      var p = hex(pk);
+      var dst = eidToChain[parseInt(p.slice(90, 98), 16)];
+      if (!dst || !MINTER[dst]) return null;
+      var drpc = cfg.chains[String(dst)].rpc;
+      var key = dst + ":" + l.address.toLowerCase();
+      if (!(key in twinCache)) {
+        var t = await ethCallRaw(drpc, MINTER[dst], "0x3e94c904" + word(l.address));
+        twinCache[key] = t && t.ok ? "0x" + hex(t.data).slice(24) : null;
+      }
+      var twin = twinCache[key];
+      if (twin && !/^0x0+$/.test(twin)) {
+        var o = await ethCallRaw(drpc, twin, "0x6352211e" + word(tokenId.toString(16)));
+        if (o === null || o.ok) return null; // minted (or RPC down: don't show)
+      }
+      return {
+        tokenId: tokenId.toString(),
+        collection: l.address,
+        from: "0x" + hex(l.topics[1]).slice(24),
+        tx: l.transactionHash,
+        dst: dst,
+        nonce: parseInt(p.slice(2, 18), 16),
+      };
+    });
+    rows = rows.filter(Boolean);
+    // Drop packets the destination has already moved past (delivered or skipped).
+    var lazy = {};
+    var dsts = rows.map(function (r) { return r.dst; }).filter(function (d, i, a) { return a.indexOf(d) === i; });
+    await Promise.all(dsts.map(async function (d) {
+      var c = cfg.chains[String(d)];
+      var res = await ethCallRaw(c.rpc, c.endpoint, "0x5b17bb70" + word(MINTER[d]) + word((30324).toString(16)) + word(VAULT));
+      lazy[d] = res && res.ok ? parseInt(hex(res.data) || "0", 16) : 0;
+    }));
+    rows = rows.filter(function (r) { return r.nonce > lazy[r.dst]; }).sort(function (a, b) {
+      return a.dst - b.dst || a.nonce - b.nonce;
+    });
+    var seen = {};
+    rows.forEach(function (r) {
+      r.blocker = seen[r.dst] || null;
+      r.ready = !r.blocker && r.nonce === lazy[r.dst] + 1;
+      if (!seen[r.dst]) seen[r.dst] = r;
+    });
+    return rows;
+  }
+  window.scanStuckMints = scanStuck;
 
   function mountFinishPanel() {
     if (document.getElementById("stuck-mint-btn")) return;
@@ -374,39 +477,108 @@
     btn.textContent = "Stuck mint? Finish it";
     btn.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:9999;padding:10px 14px;border-radius:10px;border:1px solid #444;background:#1b1b1b;color:#fff;font:600 13px Inter,sans-serif;cursor:pointer";
     var box = document.createElement("div");
-    box.style.cssText = "display:none;position:fixed;right:16px;bottom:64px;z-index:9999;width:340px;max-width:calc(100vw - 32px);padding:16px;border-radius:12px;border:1px solid #444;background:#111;color:#eee;font:13px/1.4 Inter,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)";
+    box.style.cssText = "display:none;position:fixed;right:16px;bottom:64px;z-index:9999;width:360px;max-width:calc(100vw - 32px);max-height:70vh;overflow:auto;padding:16px;border-radius:12px;border:1px solid #444;background:#111;color:#eee;font:13px/1.4 Inter,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)";
+    var field = "width:100%;box-sizing:border-box;margin:6px 0 10px;padding:8px;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#fff;font:13px Inter,sans-serif";
+    var primary = "width:100%;padding:10px;border-radius:8px;border:0;background:#f5a623;color:#111;font:700 13px Inter,sans-serif;cursor:pointer";
     var opts = "";
-    [[2741, "Abstract (bridging out)"], [1, "Ethereum (returning)"], [8453, "Base (returning)"], [56, "BNB Chain (returning)"], [33139, "ApeChain (returning)"], [4663, "Robinhood Chain (returning)"]].forEach(function (c) {
+    [[1, "Ethereum"], [8453, "Base"], [56, "BNB Chain"], [33139, "ApeChain"], [4663, "Robinhood Chain"], [2741, "Abstract"]].forEach(function (c) {
       opts += '<option value="' + c[0] + '">' + c[1] + "</option>";
     });
-    var field = "width:100%;box-sizing:border-box;margin:6px 0 10px;padding:8px;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#fff;font:13px Inter,sans-serif";
     box.innerHTML =
       '<div style="font-weight:700;margin-bottom:6px">Finish a stuck mint</div>' +
-      '<div style="color:#aaa;margin-bottom:10px">If your NFT was locked but the twin never minted, paste the lock transaction. You need a little gas on the destination chain. The twin always goes to the wallet that locked it.</div>' +
-      '<label>Chain you locked on<select id="stuck-src" style="' + field + '">' + opts + "</select></label>" +
-      '<label>Lock transaction hash<input id="stuck-tx" placeholder="0x…" style="' + field + '"></label>' +
-      '<button id="stuck-go" style="width:100%;padding:10px;border-radius:8px;border:0;background:#f5a623;color:#111;font:700 13px Inter,sans-serif;cursor:pointer">Finish mint</button>' +
-      '<div id="stuck-msg" style="margin-top:10px;word-break:break-all;color:#ccc"></div>';
-    btn.onclick = function () {
-      box.style.display = box.style.display === "none" ? "block" : "none";
-    };
+      '<div style="color:#aaa;margin-bottom:10px">Locked an NFT but the twin never showed up? Find it here and sign the mint. You need a little gas on the destination chain. The twin always goes to the wallet that locked it.</div>' +
+      '<label>Wallet that locked the NFTs<input id="stuck-addr" placeholder="0x…" style="' + field + '"></label>' +
+      '<button id="stuck-find" style="' + primary + '">Find my stuck mints</button>' +
+      '<div id="stuck-list" style="margin-top:12px"></div>' +
+      '<div id="stuck-msg" style="margin-top:10px;word-break:break-all;color:#ccc"></div>' +
+      '<details style="margin-top:12px;color:#aaa"><summary style="cursor:pointer">Returning a twin? Paste the transaction</summary>' +
+      '<label>Chain you sent from<select id="stuck-src" style="' + field + '">' + opts + "</select></label>" +
+      '<label>Transaction hash<input id="stuck-tx" placeholder="0x…" style="' + field + '"></label>' +
+      '<button id="stuck-go" style="' + primary + '">Finish</button></details>';
     document.body.appendChild(box);
     document.body.appendChild(btn);
     var msg = box.querySelector("#stuck-msg");
-    var go = box.querySelector("#stuck-go");
-    go.onclick = async function () {
-      go.disabled = true;
-      msg.style.color = "#ccc";
+    var list = box.querySelector("#stuck-list");
+    var addr = box.querySelector("#stuck-addr");
+    function say(t, color) {
+      msg.style.color = color || "#ccc";
+      msg.textContent = t;
+    }
+    function fail(err) {
+      say((err && (err.shortMessage || err.message)) || String(err), "#ff8a80");
+    }
+    btn.onclick = async function () {
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      if (box.style.display === "block" && !addr.value && window.ethereum) {
+        try {
+          var acc = await window.ethereum.request({ method: "eth_accounts" });
+          if (acc && acc[0]) addr.value = acc[0];
+        } catch (e) {}
+      }
+    };
+    async function finish(row, button) {
+      button.disabled = true;
       try {
-        await finishStuckMint(box.querySelector("#stuck-src").value, box.querySelector("#stuck-tx").value, function (t) {
-          msg.textContent = t;
-        });
-        msg.style.color = "#7ddc8a";
+        await finishStuckMint(2741, row.tx, say);
+        say("Mint sent for #" + row.tokenId + ". Give it a few seconds, then search again for the next one.", "#7ddc8a");
       } catch (err) {
-        msg.style.color = "#ff8a80";
-        msg.textContent = (err && (err.shortMessage || err.message)) || String(err);
+        fail(err);
+      } finally {
+        button.disabled = false;
+      }
+    }
+    async function find() {
+      var who = addr.value.trim().toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(who)) return say("Enter the wallet address that locked the NFTs.", "#ff8a80");
+      list.innerHTML = "";
+      var go = box.querySelector("#stuck-find");
+      go.disabled = true;
+      try {
+        var rows = await scanStuck(say);
+        var mine = rows.filter(function (r) { return r.from === who; });
+        var shown = [];
+        mine.forEach(function (r) {
+          if (r.blocker && r.blocker.from !== who && shown.indexOf(r.blocker) < 0) shown.push(r.blocker);
+          shown.push(r);
+        });
+        shown = shown.filter(function (r, i, a) { return a.indexOf(r) === i; });
+        if (!shown.length) return say("No stuck mints for this wallet. Everything it locked has minted.", "#7ddc8a");
+        say("");
+        shown.forEach(function (r) {
+          var meta = CHAIN_META[r.dst] || { name: "chain " + r.dst };
+          var row = document.createElement("div");
+          row.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #2a2a2a";
+          var label = document.createElement("div");
+          label.style.cssText = "flex:1";
+          var note = r.from !== who ? "Another holder's lock, ahead of yours. You can finish it for them." : r.ready ? "Ready to mint" : r.blocker ? "Mints after #" + r.blocker.tokenId : "Waiting for an earlier lock on this route";
+          label.innerHTML = "<b>#" + r.tokenId + "</b> to " + meta.name + '<div style="color:#999;font-size:12px">' + note + "</div>";
+          row.appendChild(label);
+          if (r.ready) {
+            var b = document.createElement("button");
+            b.textContent = "Mint";
+            b.style.cssText = "padding:6px 12px;border-radius:8px;border:0;background:#f5a623;color:#111;font:700 12px Inter,sans-serif;cursor:pointer";
+            b.onclick = function () { finish(r, b); };
+            row.appendChild(b);
+          }
+          list.appendChild(row);
+        });
+      } catch (err) {
+        fail(err);
       } finally {
         go.disabled = false;
+      }
+    }
+    box.querySelector("#stuck-find").onclick = find;
+    var goTx = box.querySelector("#stuck-go");
+    goTx.onclick = async function () {
+      goTx.disabled = true;
+      try {
+        await finishStuckMint(box.querySelector("#stuck-src").value, box.querySelector("#stuck-tx").value, say);
+        msg.style.color = "#7ddc8a";
+      } catch (err) {
+        fail(err);
+      } finally {
+        goTx.disabled = false;
       }
     };
   }
