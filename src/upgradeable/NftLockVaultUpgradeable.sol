@@ -15,15 +15,16 @@ import {OAppConfig} from "./OAppConfig.sol";
 
 /// @title NftLockVaultUpgradeable
 /// @notice UUPS vault. Abstract must be compiled with evm_version paris (no PUSH0).
-/// @dev Push-only custody. The holder calls the collection's safeTransferFrom into this
-///      vault. This contract never calls transferFrom/safeTransferFrom to pull a token.
-///      Limit Break's transfer validator (CallerOrFromMustBeWhitelisted) rejects the vault
-///      as an operator caller. Do not whitelist the vault.
+/// @dev Primary path is push custody: the holder calls the collection's safeTransferFrom
+///      into this vault (Limit Break may reject the vault as a pull operator).
+///      `lockBatch` is an optional pull path that requires setApprovalForAll / approve and
+///      calls transferFrom — use only when the collection allows the vault as operator.
 ///      Storage: slots 0-6 and the first 39 gap slots match the previous implementation.
 ///      `pushCredit` occupies the former last gap slot (46). Peers, endpoint, owner,
 ///      delegate, and localEid are untouched by an upgrade.
 ///      `allowInitializePath` lets EndpointV2 verify the first return message on a path
 ///      whose peer is already set (destination twin). No new storage.
+///      This implementation does not include returnLocked.
 contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, IERC721Receiver, IOAppReceiver {
     using SwapPayload for SwapPayload.LockMintPayload;
     using SwapPayload for SwapPayload.UnlockBurnPayload;
@@ -80,6 +81,10 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
     error InsufficientPushFee();
     error NotHolding();
     error RecipientZero();
+    error EmptyBatch();
+    error LengthMismatch();
+    error ValueMismatch();
+    error NotApproved();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() Ownable(msg.sender) {
@@ -120,6 +125,27 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         if (msg.value == 0) revert InsufficientPushFee();
         pushCredit[msg.sender][collection][tokenId] += msg.value;
         emit PushPrepaid(msg.sender, collection, tokenId, msg.value);
+    }
+
+    /// @notice Credit LayerZero fees for many tokenIds in one payment.
+    /// @dev `values[i]` is credited to `tokenIds[i]`. `values` must sum exactly to `msg.value`.
+    function prepayPushBatch(address collection, uint256[] calldata tokenIds, uint256[] calldata values)
+        external
+        payable
+        nonReentrant
+    {
+        uint256 n = tokenIds.length;
+        if (n == 0) revert EmptyBatch();
+        if (n != values.length) revert LengthMismatch();
+        uint256 sum;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 amount = values[i];
+            if (amount == 0) revert InsufficientPushFee();
+            sum += amount;
+            pushCredit[msg.sender][collection][tokenIds[i]] += amount;
+            emit PushPrepaid(msg.sender, collection, tokenIds[i], amount);
+        }
+        if (sum != msg.value) revert ValueMismatch();
     }
 
     function withdrawPushCredit(address collection, uint256 tokenId) external nonReentrant {
@@ -226,18 +252,86 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
         return IERC721Receiver.onERC721Received.selector;
     }
 
+    /// @notice Pull-and-lock many NFTs to the same destination in one transaction.
+    /// @dev Requires setApprovalForAll (or per-token approve). For each token, consumes
+    ///      `pushCredit` first, then tops up any quote shortfall from `msg.value` (lock order).
+    ///      Leftover `msg.value` is refunded. Preferred UX: `prepayPushBatch` then
+    ///      `lockBatch` with value 0. Packet encoding matches the single push path.
+    function lockBatch(
+        address collection,
+        uint256[] calldata tokenIds,
+        uint32 destEid,
+        address recipient,
+        bytes calldata options
+    ) external payable nonReentrant returns (bytes32[] memory lockIds) {
+        uint256 n = tokenIds.length;
+        if (n == 0) revert EmptyBatch();
+        if (recipient == address(0)) revert RecipientZero();
+        if (peers[destEid] == bytes32(0)) revert PeerNotSet(destEid);
+
+        bytes32 recipientRaw = bytes32(uint256(uint160(recipient)));
+        bytes memory data = abi.encode(destEid, recipientRaw, false, options);
+        lockIds = new bytes32[](n);
+        uint256 remaining = msg.value;
+
+        for (uint256 i = 0; i < n; i++) {
+            uint256 tokenId = tokenIds[i];
+            if (IERC721(collection).ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+            if (
+                IERC721(collection).getApproved(tokenId) != address(this)
+                    && !IERC721(collection).isApprovedForAll(msg.sender, address(this))
+            ) revert NotApproved();
+
+            IERC721(collection).transferFrom(msg.sender, address(this), tokenId);
+            if (IERC721(collection).ownerOf(tokenId) != address(this)) revert NotHolding();
+
+            bytes32 lockId = _storeLock(collection, msg.sender, tokenId, destEid);
+            lockIds[i] = lockId;
+
+            uint256 prepaid = pushCredit[msg.sender][collection][tokenId];
+            if (prepaid != 0) pushCredit[msg.sender][collection][tokenId] = 0;
+
+            LockRecord memory rec = locks[lockId];
+            bytes memory message = _encodeEvm(rec, recipient, lockId);
+            uint256 nativeFee = endpoint.quote(
+                ILayerZeroEndpointV2.MessagingParams({
+                    dstEid: destEid,
+                    receiver: peers[destEid],
+                    message: message,
+                    options: options,
+                    payInLzToken: false
+                }),
+                address(this)
+            ).nativeFee;
+
+            uint256 fee = prepaid;
+            if (fee < nativeFee) {
+                uint256 need = nativeFee - fee;
+                if (remaining < need) revert InsufficientPushFee();
+                remaining -= need;
+                fee = nativeFee;
+            }
+            if (fee == 0) revert InsufficientPushFee();
+            _dispatch(lockId, recipientRaw, false, options, fee, msg.sender);
+        }
+        if (remaining != 0) {
+            (bool ok,) = msg.sender.call{value: remaining}("");
+            require(ok, "refund failed");
+        }
+    }
+
     function _lockPushed(address collection, address from, uint256 tokenId, bytes calldata data) internal {
         if (from == address(0) || from == address(this)) revert BadPushData();
         if (IERC721(collection).ownerOf(tokenId) != address(this)) revert NotHolding();
-        bytes32 lockId = _storeLock(collection, from, tokenId, data);
+        (uint32 destEid,,,) = abi.decode(data, (uint32, bytes32, bool, bytes));
+        bytes32 lockId = _storeLock(collection, from, tokenId, destEid);
         _payAndSend(lockId, from, data);
     }
 
-    function _storeLock(address collection, address from, uint256 tokenId, bytes calldata data)
+    function _storeLock(address collection, address from, uint256 tokenId, uint32 destEid)
         internal
         returns (bytes32 lockId)
     {
-        (uint32 destEid,,,) = abi.decode(data, (uint32, bytes32, bool, bytes));
         if (peers[destEid] == bytes32(0)) revert PeerNotSet(destEid);
         if (activeLockId[collection][tokenId] != bytes32(0)) revert AlreadyLocked(collection, tokenId);
         lockId = keccak256(abi.encodePacked(collection, tokenId, from, destEid, block.number, localEid));
@@ -327,14 +421,6 @@ contract NftLockVaultUpgradeable is Initializable, OAppConfig, UUPSUpgradeable, 
                 lockId: lockId
             })
         );
-    }
-
-    /// @notice Return one still-locked original to the depositor stored on that lock.
-    /// @dev Temporary owner escape. The recipient is `locks[lockId].owner`, not a caller-supplied address.
-    ///      Storage layout is unchanged. Peers, endpoint, delegate, and DVN config are not touched.
-    function returnLocked(bytes32 lockId) external onlyOwner nonReentrant {
-        address depositor = locks[lockId].owner;
-        _unlock(lockId, depositor);
     }
 
     function _unlock(bytes32 lockId, address recipient) internal {

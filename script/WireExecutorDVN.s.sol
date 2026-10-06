@@ -109,42 +109,42 @@ contract WireExecutorDVN is Script {
             eids[4] = 30416;
             path = Pathway({
                 oapp: 0xe81DdAB112137112B8FeeB853e22BC4c38F999e5,
-                oldDvn: 0x565D9E3BA522de1090C645f372C2FF0Df67a9b42,
+                oldDvn: 0xcdc640614d511ee4811b522650b1c5c90b59ddbc,
                 executor: 0x643E1471f37c4680Df30cF0C540Cd379a0fF58A5,
                 eids: eids
             });
         } else if (block.chainid == 1) {
             path = Pathway({
                 oapp: 0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B,
-                oldDvn: 0x0a3D1dEd83B443399073537eCd6d4040dD707731,
+                oldDvn: 0x58f2c9ee48b086539181512a79750a49a9ba433c,
                 executor: 0x173272739Bd7Aa6e4e214714048a9fE699453059,
                 eids: one
             });
         } else if (block.chainid == 8453) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
+                oldDvn: 0x56de702beda3c03e26d13d5475bca5b365f89767,
                 executor: 0x2CCA08ae69E0C44b18a57Ab2A87644234dAebaE4,
                 eids: one
             });
         } else if (block.chainid == 56) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
+                oldDvn: 0x8395b0014d95be967189547faa6065c30dea0e85,
                 executor: 0x3ebD570ed38B1b3b4BC886999fcF507e9D584859,
                 eids: one
             });
         } else if (block.chainid == 33139) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0x2e57bb5c4c78F9BeDcdfaE9a8eeABE0F6f6E3FB4,
+                oldDvn: 0x8395b0014d95be967189547faa6065c30dea0e85,
                 executor: 0xcCE466a522984415bC91338c232d98869193D46e,
                 eids: one
             });
         } else if (block.chainid == 4663) {
             path = Pathway({
                 oapp: 0xD59860C069Db06A6b9f180BD0dF33352B0D9e42f,
-                oldDvn: 0xf7e5bAaE563B90295ac13aD199aC3c084962b09D,
+                oldDvn: 0x0a3d1ded83b443399073537ecd6d4040dd707731,
                 executor: 0x4208D6E27538189bB48E603D6123A94b8Abe0A0b,
                 eids: one
             });

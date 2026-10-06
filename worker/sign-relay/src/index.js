@@ -114,6 +114,7 @@ export default {
     }
     const txHash = body?.txHash;
     const srcChainId = body?.srcChainId;
+    const packetIndex = body?.packetIndex ?? 0;
     if (!txHash || srcChainId === undefined || srcChainId === null) {
       return json(400, { error: "txHash and srcChainId are required" }, origin);
     }
@@ -125,6 +126,7 @@ export default {
       const result = await signLockTransaction({
         txHash,
         srcChainId,
+        packetIndex,
         privateKey: env.BRIDGE_RELAY_SIGNER_PK,
       });
       return json(

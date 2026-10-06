@@ -42,6 +42,8 @@ contract ExecutorDVN is ILayerZeroDVN {
     error MissingSignature();
     error BadSignature();
     error BadSigner();
+    error EmptyBatch();
+    error LengthMismatch();
 
     event JobAssigned(uint32 dstEid, bytes32 payloadHash, uint64 confirmations, address sender);
     event PayloadSubmitted(bytes32 payloadHash, uint64 confirmations);
@@ -99,6 +101,23 @@ contract ExecutorDVN is ILayerZeroDVN {
     ///      path. A normal wallet must pass a 65-byte signature from `signer` over this packet's
     ///      (srcEid, dstEid, payloadHash). A different packet does not recover to `signer`.
     function verifyAndCommit(bytes calldata encodedPacket, bytes calldata signature) external payable {
+        _verifyAndCommit(encodedPacket, signature, msg.value);
+    }
+
+    /// @notice Verify, commit, and deliver many packets in order (atomic).
+    /// @dev Arrays must be the same non-zero length. One failure reverts the whole batch.
+    ///      `msg.value` is forwarded only to the last delivery (mints are typically value 0).
+    function verifyAndCommitBatch(bytes[] calldata encodedPackets, bytes[] calldata signatures) external payable {
+        uint256 n = encodedPackets.length;
+        if (n == 0) revert EmptyBatch();
+        if (n != signatures.length) revert LengthMismatch();
+        for (uint256 i = 0; i < n; i++) {
+            uint256 value = i + 1 == n ? msg.value : 0;
+            _verifyAndCommit(encodedPackets[i], signatures[i], value);
+        }
+    }
+
+    function _verifyAndCommit(bytes calldata encodedPacket, bytes calldata signature, uint256 value) internal {
         if (encodedPacket.length < HEADER_LEN + 32) revert BadPacket();
         if (uint8(encodedPacket[0]) != 1) revert BadPacket();
 
@@ -126,7 +145,7 @@ contract ExecutorDVN is ILayerZeroDVN {
 
         bytes32 guid = bytes32(encodedPacket[HEADER_LEN:HEADER_LEN + 32]);
         bytes calldata message = encodedPacket[HEADER_LEN + 32:];
-        IEndpointExec(endpoint).lzReceive{value: msg.value}(
+        IEndpointExec(endpoint).lzReceive{value: value}(
             IEndpointExec.Origin({srcEid: srcEid, sender: sender, nonce: nonce}),
             receiver,
             guid,

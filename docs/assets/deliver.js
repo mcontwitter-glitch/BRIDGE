@@ -613,6 +613,334 @@
       }
     };
   }
+
+  function packetsFromReceipt(receipt) {
+    var logs = (receipt && receipt.logs) || [];
+    var out = [];
+    for (var i = 0; i < logs.length; i++) {
+      var entry = logs[i];
+      var topic = entry.topics && entry.topics[0];
+      if (!topic || topic.toLowerCase() !== PACKET_SENT) continue;
+      try {
+        var pk = decodeFirstBytes(entry.data);
+        if (pk && hex(pk).length >= 113 * 2) out.push(pk);
+      } catch (err) {}
+    }
+    return out;
+  }
+
+  function encBytesArray(arr) {
+    var n = arr.length;
+    var offsets = [];
+    var bodies = [];
+    var head = n.toString(16).padStart(64, "0");
+    var cursor = 32 * n;
+    for (var i = 0; i < n; i++) {
+      offsets.push(cursor.toString(16).padStart(64, "0"));
+      var b = encBytes(arr[i]);
+      bodies.push(b);
+      cursor += b.length / 2;
+    }
+    return head + offsets.join("") + bodies.join("");
+  }
+  function encodeVerifyBatch(packets, signatures) {
+    var a = encBytesArray(packets);
+    var b = encBytesArray(signatures);
+    var offA = (64).toString(16).padStart(64, "0");
+    var offB = (64 + a.length / 2).toString(16).padStart(64, "0");
+    return "0x" + "3bf8d626" + offA + offB + a + b;
+  }
+
+  async function bridgeDeliverMintBatch(opts) {
+    var step = opts.step || "mint";
+    var onStep = opts.onStep || function () {};
+    var receipt = opts.receipt;
+    var txHash = receipt && (receipt.transactionHash || receipt.hash);
+    if (!txHash) throw new Error("The lock receipt has no transaction hash.");
+    var localPackets = packetsFromReceipt(receipt);
+    if (!localPackets.length) throw new Error("The lock transaction has no PacketSent logs.");
+    onStep(step, "active", "Requesting mint signatures for " + localPackets.length + " locks…");
+    var cfg = await fetch("/dvn.json").then(function (r) {
+      if (!r.ok) throw new Error("dvn.json is missing");
+      return r.json();
+    });
+    var signUrl = (cfg.signRelayUrl || "/api/sign-relay").replace(/\/$/, "");
+    // Worker signs one txHash; for a single lockBatch tx it may only return one packet.
+    // Prefer signing via each packet's payload by posting the same txHash once if worker
+    // returns all, otherwise loop with index hints — fall back to per-packet local rebuild.
+    var packets = [];
+    var signatures = [];
+    var body;
+    try {
+      var res = await fetch(signUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ txHash: txHash, srcChainId: opts.srcChainId }),
+      });
+      var text = await res.text();
+      if (!res.ok) throw new Error(text.slice(0, 280) || "HTTP " + res.status);
+      body = JSON.parse(text);
+    } catch (err) {
+      throw new Error("Could not get the mint signature (" + ((err && err.message) || err) + ").");
+    }
+    // If worker returns a single packet (current API), sign each PacketSent by re-fetching
+    // is not possible for multi-packet one tx — use local packets + request per-packet if
+    // worker supports encodedPacket. Fall back: one signature for first, then for others
+    // call sign-relay with encodedPacket override when available.
+    if (body && Array.isArray(body.signatures) && Array.isArray(body.encodedPackets)) {
+      packets = body.encodedPackets;
+      signatures = body.signatures;
+    } else if (body && body.signature && body.encodedPacket && localPackets.length === 1) {
+      packets = [body.encodedPacket];
+      signatures = [body.signature];
+    } else {
+      // Multi-packet lockBatch: ask worker once per packet index via encodedPacket field
+      // (signRelay accepts encodedPacket in some versions). Otherwise sign each by posting
+      // txHash + packetIndex.
+      for (var i = 0; i < localPackets.length; i++) {
+        onStep(step, "active", "Signing packet " + (i + 1) + "/" + localPackets.length + "…");
+        var res2 = await fetch(signUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            txHash: txHash,
+            srcChainId: opts.srcChainId,
+            packetIndex: i,
+            encodedPacket: localPackets[i],
+          }),
+        });
+        var t2 = await res2.text();
+        if (!res2.ok) throw new Error(t2.slice(0, 280) || "HTTP " + res2.status);
+        var b2 = JSON.parse(t2);
+        if (!b2.signature || !b2.encodedPacket) throw new Error("Signer missing packet " + i);
+        packets.push(b2.encodedPacket);
+        signatures.push(b2.signature);
+        if (b2.dstChainId) opts.destChainId = Number(b2.dstChainId);
+      }
+    }
+    if (packets.length !== signatures.length || packets.length === 0) {
+      throw new Error("Batch mint needs matching packets and signatures.");
+    }
+    var dvn =
+      (body && body.verifier) ||
+      (cfg.byEid && cfg.byEid[String((body && body.dstEid) || dstEid(packets[0]))]);
+    if (!dvn) throw new Error("No destination verifier is configured for this route.");
+    onStep(step, "active", "Switch to the destination chain and sign one batch mint. You pay this gas.");
+    if (opts.switchChain) await opts.switchChain({ chainId: opts.destChainId });
+    else if (window.ethereum) await switchOrAdd(Number(opts.destChainId), cfg);
+    else throw new Error("Connect a wallet to sign the mint.");
+    var abi = [
+      {
+        type: "function",
+        name: "verifyAndCommitBatch",
+        stateMutability: "payable",
+        inputs: [
+          { name: "encodedPackets", type: "bytes[]" },
+          { name: "signatures", type: "bytes[]" },
+        ],
+        outputs: [],
+      },
+    ];
+    var hash;
+    var singleAbi = [
+      {
+        type: "function",
+        name: "verifyAndCommit",
+        stateMutability: "payable",
+        inputs: [
+          { name: "encodedPacket", type: "bytes" },
+          { name: "signature", type: "bytes" },
+        ],
+        outputs: [],
+      },
+    ];
+    async function tryBatch() {
+      if (opts.writeContractAsync) {
+        return opts.writeContractAsync({
+          address: dvn,
+          abi: abi,
+          functionName: "verifyAndCommitBatch",
+          args: [packets, signatures],
+          chainId: opts.destChainId,
+        });
+      }
+      var from = (await window.ethereum.request({ method: "eth_accounts" }))[0];
+      return window.ethereum.request({
+        method: "eth_sendTransaction",
+        params: [{ from: from, to: dvn, data: encodeVerifyBatch(packets, signatures) }],
+      });
+    }
+    async function mintOne(i) {
+      onStep(step, "active", "Signing mint " + (i + 1) + "/" + packets.length + " (destination has no batch verifier)…");
+      if (opts.writeContractAsync) {
+        return opts.writeContractAsync({
+          address: dvn,
+          abi: singleAbi,
+          functionName: "verifyAndCommit",
+          args: [packets[i], signatures[i]],
+          chainId: opts.destChainId,
+        });
+      }
+      var from = (await window.ethereum.request({ method: "eth_accounts" }))[0];
+      return window.ethereum.request({
+        method: "eth_sendTransaction",
+        params: [{ from: from, to: dvn, data: encodeVerify(packets[i], signatures[i]) }],
+      });
+    }
+    try {
+      hash = await tryBatch();
+    } catch (err) {
+      var why = ((err && (err.shortMessage || err.message)) || String(err)).toLowerCase();
+      if (packets.length === 1 || !/verifyandcommitbatch|function selector|execution reverted|not found|unsupported/i.test(why)) {
+        // Prefer sequential singles when batch is unavailable (e.g. Ethereum not upgraded yet).
+        if (packets.length > 1 && (/verifyandcommitbatch|function selector|unsupported|no data/i.test(why) || Number(opts.destChainId) === 1)) {
+          var last;
+          for (var si = 0; si < packets.length; si++) {
+            last = await mintOne(si);
+          }
+          hash = last;
+        } else {
+          throw err;
+        }
+      } else {
+        var last2;
+        for (var sj = 0; sj < packets.length; sj++) {
+          last2 = await mintOne(sj);
+        }
+        hash = last2;
+      }
+    }
+    onStep(step, "done", typeof hash === "string" ? hash : "submitted");
+    return hash;
+  }
+  window.bridgeDeliverMintBatch = bridgeDeliverMintBatch;
+  window.packetsFromReceipt = packetsFromReceipt;
+
+  var VAULT_BATCH_ABI = [
+    { type: "function", name: "prepayPushBatch", stateMutability: "payable", inputs: [
+      { name: "collection", type: "address" }, { name: "tokenIds", type: "uint256[]" }, { name: "values", type: "uint256[]" }
+    ], outputs: [] },
+    { type: "function", name: "lockBatch", stateMutability: "payable", inputs: [
+      { name: "collection", type: "address" }, { name: "tokenIds", type: "uint256[]" }, { name: "destEid", type: "uint32" },
+      { name: "recipient", type: "address" }, { name: "options", type: "bytes" }
+    ], outputs: [{ name: "lockIds", type: "bytes32[]" }] },
+    { type: "function", name: "quoteLock", stateMutability: "view", inputs: [
+      { name: "collection", type: "address" }, { name: "tokenId", type: "uint256" }, { name: "destEid", type: "uint32" },
+      { name: "recipient", type: "address" }, { name: "options", type: "bytes" }
+    ], outputs: [{ name: "fee", type: "tuple", components: [{ name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" }] }] },
+  ];
+  var ERC721_APPROVAL_ABI = [
+    { type: "function", name: "isApprovedForAll", stateMutability: "view", inputs: [
+      { name: "owner", type: "address" }, { name: "operator", type: "address" }
+    ], outputs: [{ type: "bool" }] },
+    { type: "function", name: "setApprovalForAll", stateMutability: "nonpayable", inputs: [
+      { name: "operator", type: "address" }, { name: "approved", type: "bool" }
+    ], outputs: [] },
+  ];
+  var DEFAULT_OPTS = "0x000301001101000000000000000000000000004c4b40";
+
+  /**
+   * Multi-select lock path: optional approve + one prepayPushBatch + one lockBatch + one verifyAndCommitBatch.
+   * onStep(id, state, msg) uses step ids fee/lock/mint (and approve).
+   */
+  async function bridgeBatchLockAndMint(opts) {
+    var onStep = opts.onStep || function () {};
+    var tokenIds = opts.tokenIds.map(function (t) { return BigInt(t); });
+    var n = tokenIds.length;
+    if (n < 1) throw new Error("Select at least one NFT.");
+    var vault = opts.vault;
+    var collection = opts.collection;
+    var recipient = opts.recipient;
+    var destEid = Number(opts.destEid);
+    var options = opts.options || DEFAULT_OPTS;
+    var user = opts.address;
+
+    onStep("approve", "active", "Checking vault approval…");
+    var approved = false;
+    if (opts.readContract) {
+      try {
+        approved = !!(await opts.readContract({
+          address: collection,
+          abi: ERC721_APPROVAL_ABI,
+          functionName: "isApprovedForAll",
+          args: [user, vault],
+        }));
+      } catch (e) { approved = false; }
+    }
+    if (!approved) {
+      onStep("approve", "active", "Approve the vault once for this collection…");
+      var ah = await opts.writeContractAsync({
+        address: collection,
+        abi: ERC721_APPROVAL_ABI,
+        functionName: "setApprovalForAll",
+        args: [vault, true],
+        chainId: opts.srcChainId,
+      });
+      if (opts.waitForReceipt) await opts.waitForReceipt(ah);
+    }
+    onStep("approve", "done", approved ? "Already approved" : "Approved");
+
+    onStep("fee", "active", "Quoting fees for " + n + " NFTs…");
+    var values = [];
+    var total = 0n;
+    for (var i = 0; i < n; i++) {
+      var q = await opts.readContract({
+        address: vault,
+        abi: VAULT_BATCH_ABI,
+        functionName: "quoteLock",
+        args: [collection, tokenIds[i], destEid, recipient, options],
+      });
+      var fee = BigInt((q && (q.nativeFee != null ? q.nativeFee : q[0])) || 0);
+      if (fee <= 0n) throw new Error("quoteLock returned a zero fee for token " + tokenIds[i].toString());
+      await bridgeGuard.checkFee({ fee: fee, chainId: opts.srcChainId });
+      values.push(fee);
+      total += fee;
+    }
+    await bridgeGuard.funds({ chainId: opts.srcChainId, user: user, fee: total, credit: 0n });
+    await bridgeGuard.destGas({ chainId: opts.destChainId, user: user, count: n });
+    onStep("fee", "active", "Pay one fee for all " + n + " NFTs…");
+    var fh = await opts.writeContractAsync({
+      address: vault,
+      abi: VAULT_BATCH_ABI,
+      functionName: "prepayPushBatch",
+      args: [collection, tokenIds, values],
+      value: total,
+      chainId: opts.srcChainId,
+    });
+    if (opts.waitForReceipt) await opts.waitForReceipt(fh);
+    onStep("fee", "done");
+
+    onStep("lock", "active", "Locking all " + n + " NFTs in one transaction…");
+    var lh = await opts.writeContractAsync({
+      address: vault,
+      abi: VAULT_BATCH_ABI,
+      functionName: "lockBatch",
+      args: [collection, tokenIds, destEid, recipient, options],
+      value: 0n,
+      chainId: opts.srcChainId,
+    });
+    var receipt = opts.waitForReceipt ? await opts.waitForReceipt(lh) : null;
+    onStep("lock", "done", typeof lh === "string" ? lh : "locked");
+
+    if (!opts.skipMint) {
+      if (!receipt) throw new Error("Lock confirmed, but the receipt was missing.");
+      await bridgeDeliverMintBatch({
+        receipt: receipt,
+        srcChainId: opts.srcChainId,
+        destChainId: opts.destChainId,
+        onStep: onStep,
+        step: "mint",
+        switchChain: opts.switchChain,
+        writeContractAsync: opts.writeContractAsync,
+      });
+    } else {
+      onStep("mint", "done", "Queued");
+    }
+    return { hash: lh, lockReceipt: receipt, count: n };
+  }
+  window.bridgeBatchLockAndMint = bridgeBatchLockAndMint;
+
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountFinishPanel);
   else mountFinishPanel();
 })();

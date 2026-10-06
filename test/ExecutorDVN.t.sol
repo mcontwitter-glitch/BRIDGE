@@ -269,4 +269,50 @@ contract ExecutorDVNTest is Test {
         (bytes memory packet2,) = _packet(header, hex"02");
         dvn.verifyAndCommit(packet2, "");
     }
+
+    function test_verifyAndCommitBatchProcessesInOrder() public {
+        bytes memory h1 = _header(20, 30324, address(0xA11), 30101, address(0xB22));
+        bytes memory h2 = _header(21, 30324, address(0xA11), 30101, address(0xB22));
+        (bytes memory p1,) = _packet(h1, hex"01");
+        (bytes memory p2,) = _packet(h2, hex"02");
+        bytes32 ph1 = keccak256(abi.encodePacked(bytes32(keccak256("guid")), hex"01"));
+        bytes32 ph2 = keccak256(abi.encodePacked(bytes32(keccak256("guid")), hex"02"));
+        bytes[] memory packets = new bytes[](2);
+        packets[0] = p1;
+        packets[1] = p2;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _sign(30324, 30101, ph1);
+        sigs[1] = _sign(30324, 30101, ph2);
+        vm.prank(stranger);
+        dvn.verifyAndCommitBatch(packets, sigs);
+        assertTrue(endpoint.delivered());
+        assertEq(uln.lastHash(), ph2);
+        assertTrue(uln.committed());
+    }
+
+    function test_verifyAndCommitBatchRevertsOnBadMidPacket() public {
+        bytes memory h1 = _header(30, 30324, address(0xA11), 30101, address(0xB22));
+        bytes memory h2 = _header(31, 30324, address(0xA11), 30101, address(0xB22));
+        (bytes memory p1,) = _packet(h1, hex"11");
+        (bytes memory p2,) = _packet(h2, hex"22");
+        bytes32 ph1 = keccak256(abi.encodePacked(bytes32(keccak256("guid")), hex"11"));
+        bytes[] memory packets = new bytes[](2);
+        packets[0] = p1;
+        packets[1] = p2;
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _sign(30324, 30101, ph1);
+        sigs[1] = _sign(30324, 30101, keccak256("wrong"));
+        vm.prank(stranger);
+        vm.expectRevert(ExecutorDVN.BadSigner.selector);
+        dvn.verifyAndCommitBatch(packets, sigs);
+        assertFalse(endpoint.delivered());
+    }
+
+    function test_verifyAndCommitBatchEmptyReverts() public {
+        bytes[] memory packets = new bytes[](0);
+        bytes[] memory sigs = new bytes[](0);
+        vm.expectRevert(ExecutorDVN.EmptyBatch.selector);
+        dvn.verifyAndCommitBatch(packets, sigs);
+    }
+
 }

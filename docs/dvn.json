@@ -3,11 +3,11 @@
   "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
     "30101": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
-    "30102": "0x8395b0014d95be967189547faa6065c30dea0e85",
-    "30184": "0x56de702beda3c03e26d13d5475bca5b365f89767",
-    "30312": "0x8395b0014d95be967189547faa6065c30dea0e85",
-    "30324": "0xcdc640614d511ee4811b522650b1c5c90b59ddbc",
-    "30416": "0x0a3d1ded83b443399073537ecd6d4040dd707731"
+    "30102": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+    "30184": "0x565d9e3ba522de1090c645f372c2ff0df67a9b42",
+    "30312": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+    "30324": "0xc12fcb2107ff871f8f48c715f02e72c74b458da9",
+    "30416": "0x7154905b862c3fe3b2f9b3d6fa8c761112289a93"
   },
   "chains": {
     "1": {
@@ -81,5 +81,17 @@
   },
   "lzReceiveGas": 1,
   "lockPaused": false,
-  "returnPaused": false
+  "returnPaused": false,
+  "batchMint": {
+    "note": "Destination verifyAndCommitBatch. Ethereum (30101) still on pre-batch ExecutorDVN until funded.",
+    "ethereumBatchReady": false,
+    "upgraded": {
+      "30324": "0xc12fcb2107ff871f8f48c715f02e72c74b458da9",
+      "30184": "0x565d9e3ba522de1090c645f372c2ff0df67a9b42",
+      "30102": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+      "30312": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+      "30416": "0x7154905b862c3fe3b2f9b3d6fa8c761112289a93"
+    },
+    "vaultImpl": "0x2a945112ffFeEa7CA5AB7Aec9c75DdEDf00DC507"
+  }
 }

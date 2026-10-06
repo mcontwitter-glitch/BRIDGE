@@ -119,36 +119,76 @@ contract PushLockTest is Test {
         assertEq(nft.ownerOf(tokenId), alice);
     }
 
-    function test_returnLockedSendsOnlyToDepositor() public {
-        uint256 tokenId = nft.mint(alice, "ipfs://Qm/ret");
-        vm.startPrank(alice);
-        vault.prepayPush{value: 0.001 ether}(address(nft), tokenId);
-        nft.safeTransferFrom(alice, address(vault), tokenId, _pushData(bob));
-        vm.stopPrank();
-        bytes32 lockId = vault.activeLockId(address(nft), tokenId);
-        assertEq(nft.ownerOf(tokenId), address(vault));
+    function test_returnLockedRemoved() public {
+        // Live Abstract impl has no returnLocked; keep it out of the upgrade.
+        (bool ok,) = address(vault).call(abi.encodeWithSignature("returnLocked(bytes32)", bytes32(uint256(1))));
+        assertFalse(ok);
+    }
+
+    function test_prepayPushBatchCreditsEach() public {
+        uint256 a = nft.mint(alice, "ipfs://Qm/b1");
+        uint256 b = nft.mint(alice, "ipfs://Qm/b2");
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = a;
+        ids[1] = b;
+        uint256[] memory vals = new uint256[](2);
+        vals[0] = 0.001 ether;
+        vals[1] = 0.002 ether;
+        vm.prank(alice);
+        vault.prepayPushBatch{value: 0.003 ether}(address(nft), ids, vals);
+        assertEq(vault.pushCredit(alice, address(nft), a), 0.001 ether);
+        assertEq(vault.pushCredit(alice, address(nft), b), 0.002 ether);
 
         vm.prank(alice);
-        vm.expectRevert();
-        vault.returnLocked(lockId);
+        vm.expectRevert(NftLockVaultUpgradeable.ValueMismatch.selector);
+        vault.prepayPushBatch{value: 0.001 ether}(address(nft), ids, vals);
 
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit NftLockVaultUpgradeable.NftUnlocked(lockId, address(nft), tokenId, alice);
-        vault.returnLocked(lockId);
+        uint256[] memory empty;
+        vm.prank(alice);
+        vm.expectRevert(NftLockVaultUpgradeable.EmptyBatch.selector);
+        vault.prepayPushBatch{value: 0}(address(nft), empty, empty);
+    }
 
-        assertEq(nft.ownerOf(tokenId), alice);
-        (address collection, uint256 lockedId, address owner, uint32 destEid,, bool active) = vault.locks(lockId);
-        assertEq(collection, address(nft));
-        assertEq(lockedId, tokenId);
-        assertEq(owner, alice);
-        assertEq(destEid, ChainIds.BASE_EID);
-        assertFalse(active);
-        assertEq(vault.activeLockId(address(nft), tokenId), bytes32(0));
-        // path hooks stay in place
-        assertEq(vault.nextNonce(ChainIds.BASE_EID, bytes32(uint256(uint160(peer)))), 0);
+    function test_lockBatchWithApprovalAndPrepaid() public {
+        uint256 a = nft.mint(alice, "ipfs://Qm/lb1");
+        uint256 b = nft.mint(alice, "ipfs://Qm/lb2");
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = a;
+        ids[1] = b;
+        uint256[] memory vals = new uint256[](2);
+        vals[0] = 0.001 ether;
+        vals[1] = 0.001 ether;
 
-        vm.expectRevert(abi.encodeWithSelector(NftLockVaultUpgradeable.LockNotActive.selector, lockId));
-        vault.returnLocked(lockId);
+        vm.startPrank(alice);
+        vault.prepayPushBatch{value: 0.002 ether}(address(nft), ids, vals);
+        nft.setApprovalForAll(address(vault), true);
+        bytes32[] memory lockIds = vault.lockBatch(address(nft), ids, ChainIds.BASE_EID, alice, OPTS);
+        vm.stopPrank();
+
+        assertEq(lockIds.length, 2);
+        assertEq(nft.ownerOf(a), address(vault));
+        assertEq(nft.ownerOf(b), address(vault));
+        assertEq(vault.activeLockId(address(nft), a), lockIds[0]);
+        assertEq(vault.activeLockId(address(nft), b), lockIds[1]);
+        assertTrue(lockIds[0] != lockIds[1]);
+        assertEq(vault.pushCredit(alice, address(nft), a), 0);
+        assertEq(vault.pushCredit(alice, address(nft), b), 0);
+        (,, address ownerA,, , bool activeA) = vault.locks(lockIds[0]);
+        (,, address ownerB,, , bool activeB) = vault.locks(lockIds[1]);
+        assertEq(ownerA, alice);
+        assertEq(ownerB, alice);
+        assertTrue(activeA);
+        assertTrue(activeB);
+    }
+
+    function test_lockBatchRequiresApproval() public {
+        uint256 a = nft.mint(alice, "ipfs://Qm/lb3");
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = a;
+        vm.startPrank(alice);
+        vm.expectRevert(NftLockVaultUpgradeable.NotApproved.selector);
+        vault.lockBatch{value: 0.001 ether}(address(nft), ids, ChainIds.BASE_EID, alice, OPTS);
+        vm.stopPrank();
     }
 
     function test_unlockSendsToBuyerNotOriginalBridger() public {

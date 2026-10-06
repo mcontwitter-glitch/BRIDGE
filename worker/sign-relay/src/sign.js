@@ -133,7 +133,8 @@ export async function signIfMatches({ encodedPacket, recordedHash, account }) {
   };
 }
 
-export function packetFromReceipt(receipt, endpoint) {
+export function packetsFromReceipt(receipt, endpoint) {
+  const out = [];
   for (const entry of receipt.logs || []) {
     if (endpoint && !eq(entry.address, endpoint)) continue;
     const topic0 = entry.topics?.[0];
@@ -142,9 +143,17 @@ export function packetFromReceipt(receipt, endpoint) {
       [{ type: "bytes" }, { type: "bytes" }, { type: "address" }],
       /** @type {`0x${string}`} */ (entry.data),
     );
-    return { encodedPacket, packet: decodePacket(encodedPacket) };
+    out.push({ encodedPacket, packet: decodePacket(encodedPacket) });
   }
-  return null;
+  return out;
+}
+
+export function packetFromReceipt(receipt, endpoint, packetIndex = 0) {
+  const all = packetsFromReceipt(receipt, endpoint);
+  if (!all.length) return null;
+  const idx = Number(packetIndex) || 0;
+  if (idx < 0 || idx >= all.length) throw new Error(`packetIndex ${idx} out of range (found ${all.length})`);
+  return all[idx];
 }
 
 export function assignmentsFromReceipt(receipt) {
@@ -218,15 +227,15 @@ async function recordedHash(client, dvn, header) {
 }
 
 /**
- * @param {{ txHash: string, srcChainId: number|string, privateKey: string, fetchImpl?: typeof fetch }} args
+ * @param {{ txHash: string, srcChainId: number|string, privateKey: string, packetIndex?: number, fetchImpl?: typeof fetch }} args
  */
-export async function signLockTransaction({ txHash, srcChainId, privateKey, fetchImpl }) {
+export async function signLockTransaction({ txHash, srcChainId, privateKey, packetIndex = 0, fetchImpl }) {
   if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("txHash must be a 32-byte hex hash");
   const account = accountFromSecret(privateKey);
   const { src, client } = createSourceClient(srcChainId, fetchImpl);
   const receipt = await client.getTransactionReceipt({ hash: /** @type {`0x${string}`} */ (txHash) });
   if (!receipt) throw new Error("transaction receipt not found");
-  const found = packetFromReceipt(receipt, src.endpoint);
+  const found = packetFromReceipt(receipt, src.endpoint, packetIndex);
   if (!found) throw new Error("PacketSent was not in that transaction");
   const jobs = assignmentsFromReceipt(receipt).filter(
     (job) => job.dstEid === found.packet.dstEid && eq(job.payloadHash, found.packet.payloadHash),
@@ -265,6 +274,7 @@ export async function signLockTransaction({ txHash, srcChainId, privateKey, fetc
     signer: signed.signer,
     txHash,
     srcChainId: Number(srcChainId),
+    packetIndex: Number(packetIndex) || 0,
   };
 }
 

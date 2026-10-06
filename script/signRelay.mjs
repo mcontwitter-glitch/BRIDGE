@@ -100,14 +100,23 @@ async function withSource(chainId, fn) {
   throw last;
 }
 
-export function packetFromReceipt(receipt, endpoint) {
+export function packetsFromReceipt(receipt, endpoint) {
+  const out = [];
   for (const entry of receipt.logs || []) {
     if (endpoint && !eq(entry.address, endpoint)) continue;
     if (!entry.topics?.length || !eq(entry.topics[0], PACKET_SENT_TOPIC)) continue;
     const [encodedPacket] = coder.decode(["bytes", "bytes", "address"], entry.data);
-    return { encodedPacket, packet: decodePacket(encodedPacket) };
+    out.push({ encodedPacket, packet: decodePacket(encodedPacket) });
   }
-  return null;
+  return out;
+}
+
+export function packetFromReceipt(receipt, endpoint, packetIndex = 0) {
+  const all = packetsFromReceipt(receipt, endpoint);
+  if (!all.length) return null;
+  const idx = Number(packetIndex) || 0;
+  if (idx < 0 || idx >= all.length) throw new Error(`packetIndex ${idx} out of range (found ${all.length})`);
+  return all[idx];
 }
 
 export function assignmentsFromReceipt(receipt) {
@@ -131,11 +140,11 @@ async function recordedHash(provider, dvn, header) {
   return contract.packetHash(keccak256(getBytes(header)));
 }
 
-export async function signLockTransaction({ txHash, srcChainId, wallet }) {
+export async function signLockTransaction({ txHash, srcChainId, wallet, packetIndex = 0 }) {
   return withSource(srcChainId, async (provider, src) => {
     const receipt = await provider.getTransactionReceipt(txHash);
     if (!receipt) throw new Error("transaction receipt not found");
-    const found = packetFromReceipt(receipt, src.endpoint);
+    const found = packetFromReceipt(receipt, src.endpoint, packetIndex);
     if (!found) throw new Error("PacketSent was not in that transaction");
     const jobs = assignmentsFromReceipt(receipt).filter(
       (job) => job.dstEid === found.packet.dstEid && eq(job.payloadHash, found.packet.payloadHash),
