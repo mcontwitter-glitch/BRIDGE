@@ -655,68 +655,53 @@
     var step = opts.step || "mint";
     var onStep = opts.onStep || function () {};
     var receipt = opts.receipt;
-    var txHash = receipt && (receipt.transactionHash || receipt.hash);
-    if (!txHash) throw new Error("The lock receipt has no transaction hash.");
-    var localPackets = packetsFromReceipt(receipt);
-    if (!localPackets.length) throw new Error("The lock transaction has no PacketSent logs.");
-    onStep(step, "active", "Requesting mint signatures for " + localPackets.length + " locks…");
+    // Prefer an explicit list of lock tx hashes (one PacketSent each from push locks).
+    var lockTxHashes = (opts.lockTxHashes || []).filter(Boolean);
+    if (!lockTxHashes.length) {
+      var txHash0 = receipt && (receipt.transactionHash || receipt.hash);
+      if (!txHash0) throw new Error("The lock receipt has no transaction hash.");
+      // One lockBatch tx can contain several PacketSent logs — sign by packetIndex.
+      var localPackets = packetsFromReceipt(receipt);
+      if (localPackets.length > 1) {
+        lockTxHashes = [];
+        for (var pi = 0; pi < localPackets.length; pi++) lockTxHashes.push({ hash: txHash0, packetIndex: pi });
+      } else {
+        lockTxHashes = [{ hash: txHash0, packetIndex: 0 }];
+      }
+    } else {
+      lockTxHashes = lockTxHashes.map(function (h) {
+        return typeof h === "string" ? { hash: h, packetIndex: 0 } : h;
+      });
+    }
+    onStep(step, "active", "Requesting mint signatures for " + lockTxHashes.length + " locks…");
     var cfg = await fetch("/dvn.json").then(function (r) {
       if (!r.ok) throw new Error("dvn.json is missing");
       return r.json();
     });
     var signUrl = (cfg.signRelayUrl || "/api/sign-relay").replace(/\/$/, "");
-    // Worker signs one txHash; for a single lockBatch tx it may only return one packet.
-    // Prefer signing via each packet's payload by posting the same txHash once if worker
-    // returns all, otherwise loop with index hints — fall back to per-packet local rebuild.
     var packets = [];
     var signatures = [];
-    var body;
-    try {
-      var res = await fetch(signUrl, {
+    var body = null;
+    for (var i = 0; i < lockTxHashes.length; i++) {
+      onStep(step, "active", "Signing packet " + (i + 1) + "/" + lockTxHashes.length + "…");
+      var item = lockTxHashes[i];
+      var res2 = await fetch(signUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ txHash: txHash, srcChainId: opts.srcChainId }),
+        body: JSON.stringify({
+          txHash: item.hash,
+          srcChainId: opts.srcChainId,
+          packetIndex: item.packetIndex || 0,
+        }),
       });
-      var text = await res.text();
-      if (!res.ok) throw new Error(text.slice(0, 280) || "HTTP " + res.status);
-      body = JSON.parse(text);
-    } catch (err) {
-      throw new Error("Could not get the mint signature (" + ((err && err.message) || err) + ").");
-    }
-    // If worker returns a single packet (current API), sign each PacketSent by re-fetching
-    // is not possible for multi-packet one tx — use local packets + request per-packet if
-    // worker supports encodedPacket. Fall back: one signature for first, then for others
-    // call sign-relay with encodedPacket override when available.
-    if (body && Array.isArray(body.signatures) && Array.isArray(body.encodedPackets)) {
-      packets = body.encodedPackets;
-      signatures = body.signatures;
-    } else if (body && body.signature && body.encodedPacket && localPackets.length === 1) {
-      packets = [body.encodedPacket];
-      signatures = [body.signature];
-    } else {
-      // Multi-packet lockBatch: ask worker once per packet index via encodedPacket field
-      // (signRelay accepts encodedPacket in some versions). Otherwise sign each by posting
-      // txHash + packetIndex.
-      for (var i = 0; i < localPackets.length; i++) {
-        onStep(step, "active", "Signing packet " + (i + 1) + "/" + localPackets.length + "…");
-        var res2 = await fetch(signUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            txHash: txHash,
-            srcChainId: opts.srcChainId,
-            packetIndex: i,
-            encodedPacket: localPackets[i],
-          }),
-        });
-        var t2 = await res2.text();
-        if (!res2.ok) throw new Error(t2.slice(0, 280) || "HTTP " + res2.status);
-        var b2 = JSON.parse(t2);
-        if (!b2.signature || !b2.encodedPacket) throw new Error("Signer missing packet " + i);
-        packets.push(b2.encodedPacket);
-        signatures.push(b2.signature);
-        if (b2.dstChainId) opts.destChainId = Number(b2.dstChainId);
-      }
+      var t2 = await res2.text();
+      if (!res2.ok) throw new Error(t2.slice(0, 280) || "HTTP " + res2.status);
+      var b2 = JSON.parse(t2);
+      if (!b2.signature || !b2.encodedPacket) throw new Error("Signer missing packet for " + item.hash);
+      packets.push(b2.encodedPacket);
+      signatures.push(b2.signature);
+      body = b2;
+      if (b2.dstChainId) opts.destChainId = Number(b2.dstChainId);
     }
     if (packets.length !== signatures.length || packets.length === 0) {
       throw new Error("Batch mint needs matching packets and signatures.");
@@ -1009,8 +994,10 @@
           var rc = await rpcCall(abs.rpc, "eth_getTransactionReceipt", [lastHash]);
           if (rc && rc.logs) allLogs = allLogs.concat(rc.logs);
         }
+        var lockTxHashes = logs.map(function (l) { return l.transactionHash; });
         receipt = { transactionHash: lastHash, hash: lastHash, logs: allLogs, status: "0x1" };
         lh = lastHash;
+        opts._lockTxHashes = lockTxHashes;
       } catch (batchErr) {
         usedSendCalls = false;
         onStep("lock", "active", "Wallet could not batch transfers; signing each lock…");
@@ -1019,6 +1006,7 @@
     if (!usedSendCalls) {
       var allLogs2 = [];
       var lastHash2 = null;
+      var lockTxHashes2 = [];
       for (var sj = 0; sj < n; sj++) {
         onStep("lock", "active", "Transferring #" + tokenIds[sj].toString() + " (" + (sj + 1) + "/" + n + ")…");
         var th = await opts.writeContractAsync({
@@ -1041,10 +1029,12 @@
         });
         var rc2 = opts.waitForReceipt ? await opts.waitForReceipt(th) : null;
         lastHash2 = th;
+        lockTxHashes2.push(th);
         if (rc2 && rc2.logs) allLogs2 = allLogs2.concat(rc2.logs);
       }
       receipt = { transactionHash: lastHash2, hash: lastHash2, logs: allLogs2, status: "0x1" };
       lh = lastHash2;
+      opts._lockTxHashes = lockTxHashes2;
     }
     onStep("lock", "done", typeof lh === "string" ? lh : "locked");
 
@@ -1052,6 +1042,7 @@
       if (!receipt) throw new Error("Lock confirmed, but the receipt was missing.");
       await bridgeDeliverMintBatch({
         receipt: receipt,
+        lockTxHashes: opts._lockTxHashes,
         srcChainId: opts.srcChainId,
         destChainId: opts.destChainId,
         onStep: onStep,
