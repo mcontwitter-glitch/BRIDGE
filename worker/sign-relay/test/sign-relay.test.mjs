@@ -272,7 +272,8 @@ const sourceDvn = "0xa101a956712cca75ef10de23f832509708daef1e";
     }),
     env,
   );
-  assert.equal(badOrigin.status, 403);
+  assert.notEqual(badOrigin.status, 403);
+  assert.equal(badOrigin.headers.get("access-control-allow-origin"), "*");
 
   const options = await worker.fetch(
     new Request("https://bridge-sign-relay.workers.dev/api/sign-relay", {
@@ -282,7 +283,7 @@ const sourceDvn = "0xa101a956712cca75ef10de23f832509708daef1e";
     env,
   );
   assert.equal(options.status, 204);
-  assert.equal(options.headers.get("access-control-allow-origin"), "https://bridge.bigfoot404.biz");
+  assert.equal(options.headers.get("access-control-allow-origin"), "*");
 
   const missing = await worker.fetch(
     new Request("https://bridge-sign-relay.workers.dev/api/sign-relay", {

@@ -338,13 +338,20 @@
     var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = ctl && setTimeout(function () { ctl.abort(); }, 20000);
     var res;
+    var payload = JSON.stringify({ txHash: txHash, srcChainId: Number(srcChainId) });
     try {
-      res = await fetch(signUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ txHash: txHash, srcChainId: Number(srcChainId) }),
-        signal: ctl ? ctl.signal : undefined,
-      });
+      try {
+        res = await fetch(signUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+          signal: ctl ? ctl.signal : undefined,
+        });
+      } catch (first) {
+        if (first && first.name === "AbortError") throw first;
+        // Some mobile wallet browsers fail the CORS preflight; retry as a simple request.
+        res = await fetch(signUrl, { method: "POST", headers: { "content-type": "text/plain" }, body: payload, signal: ctl ? ctl.signal : undefined });
+      }
     } catch (err) {
       throw new Error("Couldn't reach the mint signer (" + ((err && err.name === "AbortError") ? "timed out" : (err && err.message) || err) + "). Check your connection and try again.");
     } finally {

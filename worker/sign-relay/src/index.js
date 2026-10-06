@@ -20,12 +20,15 @@ function isLocalOrigin(origin) {
   }
 }
 
+// Any page may ask: the signer only signs packets that match a real on-chain
+// assignJob record, so origin checks add no safety and broke some mobile wallet
+// browsers ("Load failed"). Rate limiting still applies.
 function corsHeaders(origin) {
-  const allow = origin && (ALLOWED_ORIGINS.has(origin) || isLocalOrigin(origin)) ? origin : "";
+  const allow = "*";
   /** @type {Record<string, string>} */
   const headers = {
     "access-control-allow-methods": "POST, OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, accept",
     "access-control-max-age": "86400",
     vary: "Origin",
   };
@@ -98,9 +101,6 @@ export default {
     }
     if (!pathOk(url.pathname)) {
       return json(404, { error: "not found" }, origin);
-    }
-    if (origin && !(ALLOWED_ORIGINS.has(origin) || isLocalOrigin(origin))) {
-      return json(403, { error: "origin not allowed" }, origin);
     }
     if (!rateLimit(clientIp(request))) {
       return json(429, { error: "rate limit exceeded" }, origin);
