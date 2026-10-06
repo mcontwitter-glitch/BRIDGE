@@ -3,7 +3,7 @@ export default {
   "signer": "0x592bcc953F683C4B0A42b0950af1DA18AAfF55e3",
   "signRelayUrl": "https://bridge-sign-relay.mcontwitter.workers.dev/api/sign-relay",
   "byEid": {
-    "30101": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+    "30101": "0x3e70b0695ecd987c7c2a52ca1edc0979355a0d18",
     "30102": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
     "30184": "0x565d9e3ba522de1090c645f372c2ff0df67a9b42",
     "30312": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
@@ -84,9 +84,10 @@ export default {
   "lockPaused": false,
   "returnPaused": false,
   "batchMint": {
-    "note": "Destination verifyAndCommitBatch. Ethereum (30101) still on pre-batch ExecutorDVN until funded.",
-    "ethereumBatchReady": false,
+    "note": "Destination verifyAndCommitBatch available on all routes.",
+    "ethereumBatchReady": true,
     "upgraded": {
+      "30101": "0x3e70b0695ecd987c7c2a52ca1edc0979355a0d18",
       "30102": "0x58f2c9ee48b086539181512a79750a49a9ba433c",
       "30184": "0x565d9e3ba522de1090c645f372c2ff0df67a9b42",
       "30312": "0x58f2c9ee48b086539181512a79750a49a9ba433c",

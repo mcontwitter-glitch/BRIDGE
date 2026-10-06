@@ -42,7 +42,7 @@ const CHAINS = {
     chainId: 1,
     rpc: "https://ethereum.publicnode.com",
     oapp: "0xDd3E6cc04168bCFC1ACaE5e70748618C5b38092B",
-    oldDvn: "0x58f2c9ee48b086539181512a79750a49a9ba433c",
+    oldDvn: "0x3e70b0695ecd987c7c2a52ca1edc0979355a0d18",
     executor: "0x173272739Bd7Aa6e4e214714048a9fE699453059",
     eids: [[30324, 15, 20]],
   },
