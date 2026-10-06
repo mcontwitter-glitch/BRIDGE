@@ -335,11 +335,21 @@
     if (receipt.status !== "0x1") throw new Error("That transaction failed on-chain, so nothing was locked.");
     say("Getting the mint signature…");
     var signUrl = (cfg.signRelayUrl || "/api/sign-relay").replace(/\/$/, "");
-    var res = await fetch(signUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ txHash: txHash, srcChainId: Number(srcChainId) }),
-    });
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctl && setTimeout(function () { ctl.abort(); }, 20000);
+    var res;
+    try {
+      res = await fetch(signUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ txHash: txHash, srcChainId: Number(srcChainId) }),
+        signal: ctl ? ctl.signal : undefined,
+      });
+    } catch (err) {
+      throw new Error("Couldn't reach the mint signer (" + ((err && err.name === "AbortError") ? "timed out" : (err && err.message) || err) + "). Check your connection and try again.");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     var text = await res.text();
     if (!res.ok) throw new Error("The signer refused this transaction: " + text.slice(0, 200));
     var body = JSON.parse(text);
@@ -349,7 +359,17 @@
     var meta = CHAIN_META[dst] || { name: "the destination", sym: "native" };
     if (!dvn || !dchain) throw new Error("No verifier is configured for that destination.");
     if (!window.ethereum) throw new Error("Open this page in a wallet browser or with a wallet extension to sign the mint.");
-    var from = (await window.ethereum.request({ method: "eth_requestAccounts" }))[0];
+    say("Signature received. Connecting to your wallet…");
+    var accs = [];
+    try { accs = await window.ethereum.request({ method: "eth_accounts" }); } catch (e) {}
+    if (!accs || !accs[0]) {
+      say("Approve the connection request in your wallet (open the wallet if no popup appeared).");
+      accs = await Promise.race([
+        window.ethereum.request({ method: "eth_requestAccounts" }),
+        new Promise(function (_, rej) { setTimeout(function () { rej(new Error("Your wallet didn't respond to the connection request. Open your wallet, approve or reject any pending request, then try again.")); }, 90000); }),
+      ]);
+    }
+    var from = accs[0];
     var data = encodeVerify(body.encodedPacket, body.signature);
     say("Checking the mint on " + meta.name + "…");
     var sim = await rpcCall(dchain.rpc, "eth_call", [{ from: from, to: dvn, data: data }, "latest"]);
