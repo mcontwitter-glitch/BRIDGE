@@ -837,7 +837,7 @@
       { name: "operator", type: "address" }, { name: "approved", type: "bool" }
     ], outputs: [] },
   ];
-  var DEFAULT_OPTS = "0x000301001101000000000000000000000000004c4b40";
+  var DEFAULT_OPTS = "0x00030100110100000000000000000000000000000001";
 
   /**
    * Multi-select lock path: optional approve + one prepayPushBatch + one lockBatch + one verifyAndCommitBatch.
@@ -855,34 +855,47 @@
     var options = opts.options || DEFAULT_OPTS;
     var user = opts.address;
 
-    onStep("approve", "active", "Checking vault approval…");
-    var approved = false;
-    if (opts.readContract) {
-      try {
-        approved = !!(await opts.readContract({
-          address: collection,
-          abi: ERC721_APPROVAL_ABI,
-          functionName: "isApprovedForAll",
-          args: [user, vault],
-        }));
-      } catch (e) { approved = false; }
+    // LIL FOOTS (Limit Break) blocks the vault from pulling via transferFrom, so we
+    // push each NFT with safeTransferFrom (same as single bridge). Fees stay one tx.
+    // If the wallet supports EIP-5792 wallet_sendCalls, all pushes are one signature.
+    onStep("approve", "done", "Push locks (no vault pull)");
+
+    function encodePushData(eid, to, optsBytes) {
+      var toWord = hex(to).padStart(64, "0");
+      var eidWord = Number(eid).toString(16).padStart(64, "0");
+      var boolWord = (0).toString(16).padStart(64, "0");
+      var optsBody = hex(optsBytes);
+      var optsLen = (optsBody.length / 2).toString(16).padStart(64, "0");
+      var optsWords = Math.ceil(optsBody.length / 64) || 0;
+      var optsPadded = optsBody.padEnd(optsWords * 64, "0");
+      // abi.encode(uint32,bytes32,bool,bytes) — dynamic bytes at offset 128
+      var off = (128).toString(16).padStart(64, "0");
+      return "0x" + eidWord + toWord + boolWord + off + optsLen + optsPadded;
     }
-    if (!approved) {
-      onStep("approve", "active", "Approve the vault once for this collection…");
-      var ah = await opts.writeContractAsync({
-        address: collection,
-        abi: ERC721_APPROVAL_ABI,
-        functionName: "setApprovalForAll",
-        args: [vault, true],
-        chainId: opts.srcChainId,
-      });
-      if (opts.waitForReceipt) await opts.waitForReceipt(ah);
+    function encodeSafeTransfer(from, to, tokenId, data) {
+      // safeTransferFrom(address,address,uint256,bytes)
+      var sel = "b88d4fde";
+      var dataBody = hex(data);
+      var dataLen = (dataBody.length / 2).toString(16).padStart(64, "0");
+      var dataWords = Math.ceil(dataBody.length / 64) || 0;
+      var dataPadded = dataBody.padEnd(dataWords * 64, "0");
+      var off = (128).toString(16).padStart(64, "0");
+      return (
+        "0x" +
+        sel +
+        hex(from).padStart(64, "0") +
+        hex(to).padStart(64, "0") +
+        BigInt(tokenId).toString(16).padStart(64, "0") +
+        off +
+        dataLen +
+        dataPadded
+      );
     }
-    onStep("approve", "done", approved ? "Already approved" : "Approved");
 
     onStep("fee", "active", "Quoting fees for " + n + " NFTs…");
     var values = [];
     var total = 0n;
+    var already = 0n;
     for (var i = 0; i < n; i++) {
       var q = await opts.readContract({
         address: vault,
@@ -893,33 +906,146 @@
       var fee = BigInt((q && (q.nativeFee != null ? q.nativeFee : q[0])) || 0);
       if (fee <= 0n) throw new Error("quoteLock returned a zero fee for token " + tokenIds[i].toString());
       await bridgeGuard.checkFee({ fee: fee, chainId: opts.srcChainId });
-      values.push(fee);
-      total += fee;
+      var cred = await bridgeGuard.credit({
+        readContract: opts.readContract,
+        contract: vault,
+        user: user,
+        collection: collection,
+        tokenId: tokenIds[i].toString(),
+      });
+      var owed = fee > cred ? fee - cred : 0n;
+      values.push(owed);
+      total += owed;
+      already += cred > fee ? fee : cred;
     }
     await bridgeGuard.funds({ chainId: opts.srcChainId, user: user, fee: total, credit: 0n });
     await bridgeGuard.destGas({ chainId: opts.destChainId, user: user, count: n });
-    onStep("fee", "active", "Pay one fee for all " + n + " NFTs…");
-    var fh = await opts.writeContractAsync({
-      address: vault,
-      abi: VAULT_BATCH_ABI,
-      functionName: "prepayPushBatch",
-      args: [collection, tokenIds, values],
-      value: total,
-      chainId: opts.srcChainId,
-    });
-    if (opts.waitForReceipt) await opts.waitForReceipt(fh);
-    onStep("fee", "done");
+    if (total > 0n) {
+      onStep("fee", "active", "Pay one fee for all " + n + " NFTs…");
+      var fh = await opts.writeContractAsync({
+        address: vault,
+        abi: VAULT_BATCH_ABI,
+        functionName: "prepayPushBatch",
+        args: [collection, tokenIds, values],
+        value: total,
+        chainId: opts.srcChainId,
+      });
+      if (opts.waitForReceipt) await opts.waitForReceipt(fh);
+      onStep("fee", "done");
+    } else {
+      onStep("fee", "done", already > 0n ? "Fees already prepaid" : "No fee due");
+    }
 
-    onStep("lock", "active", "Locking all " + n + " NFTs in one transaction…");
-    var lh = await opts.writeContractAsync({
-      address: vault,
-      abi: VAULT_BATCH_ABI,
-      functionName: "lockBatch",
-      args: [collection, tokenIds, destEid, recipient, options],
-      value: 0n,
-      chainId: opts.srcChainId,
-    });
-    var receipt = opts.waitForReceipt ? await opts.waitForReceipt(lh) : null;
+    onStep("lock", "active", "Transferring " + n + " NFTs to the vault…");
+    var pushData = encodePushData(destEid, recipient, options);
+    var calls = [];
+    for (var li = 0; li < n; li++) {
+      calls.push({
+        to: collection,
+        data: encodeSafeTransfer(user, vault, tokenIds[li], pushData),
+        value: "0x0",
+      });
+    }
+    var receipt = null;
+    var lh = null;
+    var usedSendCalls = false;
+    if (window.ethereum && window.ethereum.request && n > 1) {
+      try {
+        onStep("lock", "active", "Asking the wallet to send all " + n + " transfers in one signature…");
+        var batchId = await window.ethereum.request({
+          method: "wallet_sendCalls",
+          params: [{
+            version: "2.0.0",
+            from: user,
+            chainId: "0x" + Number(opts.srcChainId).toString(16),
+            atomicRequired: true,
+            calls: calls,
+          }],
+        });
+        usedSendCalls = true;
+        lh = typeof batchId === "string" ? batchId : (batchId && (batchId.id || batchId));
+        // Wait for each transfer by polling ownerOf — sendCalls may not return a classic receipt.
+        onStep("lock", "active", "Waiting for all transfers to confirm…");
+        for (var w = 0; w < 90; w++) {
+          var done = 0;
+          for (var oi = 0; oi < n; oi++) {
+            try {
+              var own = await opts.readContract({
+                address: collection,
+                abi: [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "address" }] }],
+                functionName: "ownerOf",
+                args: [tokenIds[oi]],
+              });
+              if (String(own).toLowerCase() === String(vault).toLowerCase()) done++;
+            } catch (e) {}
+          }
+          if (done === n) break;
+          await new Promise(function (r) { setTimeout(r, 2000); });
+        }
+        // Build a synthetic receipt from vault PacketSent logs in recent blocks via worker sign later needs real packets —
+        // fetch the last lock tx receipts by scanning Transfer logs for these token ids.
+        var abs = (await loadCfg()).chains[String(opts.srcChainId)];
+        var logs = [];
+        for (var ti = 0; ti < n; ti++) {
+          var tlogs = await rpcCall(abs.rpc, "eth_getLogs", [{
+            fromBlock: "0x" + Math.max(0, Number(await rpcCall(abs.rpc, "eth_blockNumber", [])) - 5000).toString(16),
+            toBlock: "latest",
+            address: collection,
+            topics: [
+              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+              "0x" + hex(user).padStart(64, "0"),
+              "0x" + hex(vault).padStart(64, "0"),
+              "0x" + BigInt(tokenIds[ti]).toString(16).padStart(64, "0"),
+            ],
+          }]);
+          if (tlogs && tlogs.length) logs.push(tlogs[tlogs.length - 1]);
+        }
+        if (logs.length !== n) throw new Error("Transfers may still be confirming. Wait a moment and use Stuck mint if needed.");
+        // Merge PacketSent from each transfer receipt into one synthetic receipt for mint batch.
+        var allLogs = [];
+        var lastHash = null;
+        for (var ri = 0; ri < logs.length; ri++) {
+          lastHash = logs[ri].transactionHash;
+          var rc = await rpcCall(abs.rpc, "eth_getTransactionReceipt", [lastHash]);
+          if (rc && rc.logs) allLogs = allLogs.concat(rc.logs);
+        }
+        receipt = { transactionHash: lastHash, hash: lastHash, logs: allLogs, status: "0x1" };
+        lh = lastHash;
+      } catch (batchErr) {
+        usedSendCalls = false;
+        onStep("lock", "active", "Wallet could not batch transfers; signing each lock…");
+      }
+    }
+    if (!usedSendCalls) {
+      var allLogs2 = [];
+      var lastHash2 = null;
+      for (var sj = 0; sj < n; sj++) {
+        onStep("lock", "active", "Transferring #" + tokenIds[sj].toString() + " (" + (sj + 1) + "/" + n + ")…");
+        var th = await opts.writeContractAsync({
+          address: collection,
+          abi: [{
+            type: "function",
+            name: "safeTransferFrom",
+            stateMutability: "nonpayable",
+            inputs: [
+              { name: "from", type: "address" },
+              { name: "to", type: "address" },
+              { name: "tokenId", type: "uint256" },
+              { name: "data", type: "bytes" },
+            ],
+            outputs: [],
+          }],
+          functionName: "safeTransferFrom",
+          args: [user, vault, tokenIds[sj], pushData],
+          chainId: opts.srcChainId,
+        });
+        var rc2 = opts.waitForReceipt ? await opts.waitForReceipt(th) : null;
+        lastHash2 = th;
+        if (rc2 && rc2.logs) allLogs2 = allLogs2.concat(rc2.logs);
+      }
+      receipt = { transactionHash: lastHash2, hash: lastHash2, logs: allLogs2, status: "0x1" };
+      lh = lastHash2;
+    }
     onStep("lock", "done", typeof lh === "string" ? lh : "locked");
 
     if (!opts.skipMint) {
