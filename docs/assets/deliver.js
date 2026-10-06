@@ -284,11 +284,15 @@
       var bal = await rpcCall(chain.rpc, "eth_getBalance", [o.user, "latest"]);
       var gp = await rpcCall(chain.rpc, "eth_gasPrice", []);
       if (bal === null || gp === null) return;
-      var need = (gp * 600000n * 3n) / 2n;
+      var count = BigInt(o.count || 1);
+      if (count < 1n) count = 1n;
+      var need = ((gp * 600000n * 3n) / 2n) * count;
       if (bal < need) {
         var meta = CHAIN_META[o.chainId] || { name: chain.name || "the destination chain", sym: "native" };
         throw new Error(
-          "Your wallet needs a little " + meta.sym + " on " + meta.name + " to sign the mint there (about " + fmt(need) + " " + meta.sym +
+          "Your wallet needs a little " + meta.sym + " on " + meta.name + " to sign the mint" +
+            (count > 1n ? "s (" + count.toString() + " NFTs)" : "") +
+            " there (about " + fmt(need) + " " + meta.sym +
             ", it has " + fmt(bal) + "). Add some on " + meta.name + " first. Nothing was locked.",
         );
       }
