@@ -51,6 +51,30 @@
     return "0x" + SELECTOR + offA + offB + a + b;
   }
 
+  var CHAIN_META = {
+    1: { name: "Ethereum", sym: "ETH" },
+    56: { name: "BNB Chain", sym: "BNB" },
+    2741: { name: "Abstract", sym: "ETH" },
+    4663: { name: "Robinhood Chain", sym: "ETH" },
+    8453: { name: "Base", sym: "ETH" },
+    33139: { name: "ApeChain", sym: "APE" },
+  };
+  async function switchOrAdd(chainId, cfg) {
+    var hexId = "0x" + chainId.toString(16);
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexId }] });
+    } catch (err) {
+      var code = err && (err.code || (err.data && err.data.originalError && err.data.originalError.code));
+      var chain = cfg && cfg.chains && cfg.chains[String(chainId)];
+      var meta = CHAIN_META[chainId];
+      if (code !== 4902 || !chain || !meta) throw err;
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{ chainId: hexId, chainName: meta.name, nativeCurrency: { name: meta.sym, symbol: meta.sym, decimals: 18 }, rpcUrls: chain.rpc.slice(0, 1) }],
+      });
+    }
+  }
+
   async function bridgeDeliverMint(opts) {
     var step = opts.step || "mint";
     var onStep = opts.onStep || function () {};
@@ -98,10 +122,7 @@
     onStep(step, "active", "Switch to the destination chain and sign the mint. You pay this gas.");
     if (opts.switchChain) await opts.switchChain({ chainId: opts.destChainId });
     else if (window.ethereum) {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x" + Number(opts.destChainId).toString(16) }],
-      });
+      await switchOrAdd(Number(opts.destChainId), cfg);
     } else {
       throw new Error("Connect a wallet to sign the mint.");
     }
@@ -171,6 +192,20 @@
       outputs: [{ name: "", type: "uint256" }],
     },
   ];
+  async function rpcCall(urls, method, params) {
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var r = await fetch(urls[i], {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }),
+        });
+        var j = await r.json();
+        if (j && j.result !== undefined && j.result !== null) return typeof j.result === "string" && /^0x[0-9a-f]*$/i.test(j.result) && method !== "eth_getTransactionReceipt" ? BigInt(j.result === "0x" ? 0 : j.result) : j.result;
+      } catch (e) {}
+    }
+    return null;
+  }
   var bridgeGuard = {
     checkFee: async function (o) {
       var cfg = await loadCfg();
@@ -240,6 +275,24 @@
         );
       }
     },
+    destGas: async function (o) {
+      // The mint on the destination is a second transaction the same wallet signs,
+      // so it needs gas there too. Check before anything is locked.
+      var cfg = await loadCfg();
+      var chain = cfg.chains && cfg.chains[String(o.chainId)];
+      if (!chain || !chain.rpc || !o.user) return;
+      var bal = await rpcCall(chain.rpc, "eth_getBalance", [o.user, "latest"]);
+      var gp = await rpcCall(chain.rpc, "eth_gasPrice", []);
+      if (bal === null || gp === null) return;
+      var need = (gp * 600000n * 3n) / 2n;
+      if (bal < need) {
+        var meta = CHAIN_META[o.chainId] || { name: chain.name || "the destination chain", sym: "native" };
+        throw new Error(
+          "Your wallet needs a little " + meta.sym + " on " + meta.name + " to sign the mint there (about " + fmt(need) + " " + meta.sym +
+            ", it has " + fmt(bal) + "). Add some on " + meta.name + " first. Nothing was locked.",
+        );
+      }
+    },
     simulate: async function (o) {
       if (!o.readContract) throw new Error("Cannot check the transfer without a read client.");
       try {
@@ -267,4 +320,96 @@
     },
   };
   window.bridgeGuard = bridgeGuard;
+  /* "Finish a stuck mint": for a lock (or return) whose second step was never
+     signed. Holder pastes the lock tx; anyone may pay the gas, the twin always
+     goes to the recipient written in the lock. */
+  async function finishStuckMint(srcChainId, txHash, say) {
+    var cfg = await loadCfg();
+    txHash = String(txHash || "").trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("Paste the full lock transaction hash (0x… 66 characters).");
+    var src = cfg.chains && cfg.chains[String(srcChainId)];
+    if (!src) throw new Error("Unknown source chain.");
+    say("Looking up the lock transaction…");
+    var receipt = await rpcCall(src.rpc, "eth_getTransactionReceipt", [txHash]);
+    if (!receipt) throw new Error("That transaction wasn't found on " + (CHAIN_META[srcChainId] || {}).name + ". Check the hash and the chain.");
+    if (receipt.status !== "0x1") throw new Error("That transaction failed on-chain, so nothing was locked.");
+    say("Getting the mint signature…");
+    var signUrl = (cfg.signRelayUrl || "/api/sign-relay").replace(/\/$/, "");
+    var res = await fetch(signUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ txHash: txHash, srcChainId: Number(srcChainId) }),
+    });
+    var text = await res.text();
+    if (!res.ok) throw new Error("The signer refused this transaction: " + text.slice(0, 200));
+    var body = JSON.parse(text);
+    var dst = Number(body.dstChainId);
+    var dvn = body.verifier || (cfg.byEid && cfg.byEid[String(body.dstEid || dstEid(body.encodedPacket))]);
+    var dchain = cfg.chains[String(dst)];
+    var meta = CHAIN_META[dst] || { name: "the destination", sym: "native" };
+    if (!dvn || !dchain) throw new Error("No verifier is configured for that destination.");
+    if (!window.ethereum) throw new Error("Open this page in a wallet browser or with a wallet extension to sign the mint.");
+    var from = (await window.ethereum.request({ method: "eth_requestAccounts" }))[0];
+    var data = encodeVerify(body.encodedPacket, body.signature);
+    say("Checking the mint on " + meta.name + "…");
+    var sim = await rpcCall(dchain.rpc, "eth_call", [{ from: from, to: dvn, data: data }, "latest"]);
+    if (sim === null) throw new Error("This mint can't go through on " + meta.name + ". It has most likely already been minted. Nothing was sent.");
+    var bal = await rpcCall(dchain.rpc, "eth_getBalance", [from, "latest"]);
+    var gp = await rpcCall(dchain.rpc, "eth_gasPrice", []);
+    if (bal !== null && gp !== null && bal < (gp * 600000n * 3n) / 2n) {
+      throw new Error("Your wallet needs a little " + meta.sym + " on " + meta.name + " for gas (it has " + fmt(bal) + "). Add some and try again.");
+    }
+    say("Switch to " + meta.name + " and sign the mint. You pay only the gas.");
+    await switchOrAdd(dst, cfg);
+    var hash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: from, to: dvn, data: data }] });
+    say("Mint sent on " + meta.name + ": " + hash + ". The twin goes to the wallet that locked it.");
+    return hash;
+  }
+  window.finishStuckMint = finishStuckMint;
+
+  function mountFinishPanel() {
+    if (document.getElementById("stuck-mint-btn")) return;
+    var btn = document.createElement("button");
+    btn.id = "stuck-mint-btn";
+    btn.textContent = "Stuck mint? Finish it";
+    btn.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:9999;padding:10px 14px;border-radius:10px;border:1px solid #444;background:#1b1b1b;color:#fff;font:600 13px Inter,sans-serif;cursor:pointer";
+    var box = document.createElement("div");
+    box.style.cssText = "display:none;position:fixed;right:16px;bottom:64px;z-index:9999;width:340px;max-width:calc(100vw - 32px);padding:16px;border-radius:12px;border:1px solid #444;background:#111;color:#eee;font:13px/1.4 Inter,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)";
+    var opts = "";
+    [[2741, "Abstract (bridging out)"], [1, "Ethereum (returning)"], [8453, "Base (returning)"], [56, "BNB Chain (returning)"], [33139, "ApeChain (returning)"], [4663, "Robinhood Chain (returning)"]].forEach(function (c) {
+      opts += '<option value="' + c[0] + '">' + c[1] + "</option>";
+    });
+    var field = "width:100%;box-sizing:border-box;margin:6px 0 10px;padding:8px;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#fff;font:13px Inter,sans-serif";
+    box.innerHTML =
+      '<div style="font-weight:700;margin-bottom:6px">Finish a stuck mint</div>' +
+      '<div style="color:#aaa;margin-bottom:10px">If your NFT was locked but the twin never minted, paste the lock transaction. You need a little gas on the destination chain. The twin always goes to the wallet that locked it.</div>' +
+      '<label>Chain you locked on<select id="stuck-src" style="' + field + '">' + opts + "</select></label>" +
+      '<label>Lock transaction hash<input id="stuck-tx" placeholder="0x…" style="' + field + '"></label>' +
+      '<button id="stuck-go" style="width:100%;padding:10px;border-radius:8px;border:0;background:#f5a623;color:#111;font:700 13px Inter,sans-serif;cursor:pointer">Finish mint</button>' +
+      '<div id="stuck-msg" style="margin-top:10px;word-break:break-all;color:#ccc"></div>';
+    btn.onclick = function () {
+      box.style.display = box.style.display === "none" ? "block" : "none";
+    };
+    document.body.appendChild(box);
+    document.body.appendChild(btn);
+    var msg = box.querySelector("#stuck-msg");
+    var go = box.querySelector("#stuck-go");
+    go.onclick = async function () {
+      go.disabled = true;
+      msg.style.color = "#ccc";
+      try {
+        await finishStuckMint(box.querySelector("#stuck-src").value, box.querySelector("#stuck-tx").value, function (t) {
+          msg.textContent = t;
+        });
+        msg.style.color = "#7ddc8a";
+      } catch (err) {
+        msg.style.color = "#ff8a80";
+        msg.textContent = (err && (err.shortMessage || err.message)) || String(err);
+      } finally {
+        go.disabled = false;
+      }
+    };
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountFinishPanel);
+  else mountFinishPanel();
 })();
