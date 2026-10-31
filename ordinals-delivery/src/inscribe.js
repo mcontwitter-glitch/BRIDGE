@@ -31,7 +31,7 @@ export function envelope(pubXonly, contentType, body, metadata) {
   return Buffer.concat(parts);
 }
 
-export async function inscribe({ key, recipient, contentType, body, metadata, onCommit }) {
+export async function inscribe({ key, recipient, contentType, body, metadata, onCommit, dryRun = false }) {
   if (body.length > CONFIG.maxBodyBytes) throw new Error(`Body too large (${body.length} B)`);
   const recipientScript = assertTaprootRecipient(recipient);
   const pub = xonly(key.publicKey);
@@ -58,6 +58,7 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   }
   const commitFee = commitFeeFor(psbt.inputCount);
   if (inSum < commitValue + commitFee) throw Object.assign(new Error(`Inscriber wallet underfunded: need ${commitValue + commitFee} sats confirmed at ${fundAddr}, have ${inSum}`), { status: 503 });
+  if (dryRun) return { dryRun: true, feeRate: rate, commitFee, revealFee, postage: CONFIG.postageSats, total: commitValue + commitFee, fundAddr, inSum };
   psbt.addOutput({ address: commitPay.address, value: commitValue });
   const change = inSum - commitValue - commitFee;
   if (change >= 546) psbt.addOutput({ address: fundAddr, value: change });

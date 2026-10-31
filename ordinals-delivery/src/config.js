@@ -1,20 +1,35 @@
-// Ordinals delivery config. mainnet:false HARD-BLOCKS mainnet everywhere in this service.
+// Ordinals delivery config. ORDINALS_NETWORK (default "mainnet") is the single switch; "signet" for tests.
 import os from 'node:os';
 import path from 'node:path';
 
+const network = process.env.ORDINALS_NETWORK || 'mainnet';
+if (!['mainnet', 'signet'].includes(network)) throw new Error('ORDINALS_NETWORK must be mainnet or signet');
+const mainnet = network === 'mainnet';
+const env = (k, d) => (process.env[k] === undefined || process.env[k] === '' ? d : process.env[k]);
+
 export const CONFIG = Object.freeze({
-  mainnet: false,
-  network: 'signet',
-  mempool: 'https://mempool.space/signet/api',
+  mainnet, // approved by BIG on 2026-10-31 ("Wire it for main net")
+  network,
+  mempool: mainnet ? 'https://mempool.space/api' : 'https://mempool.space/signet/api',
+  explorer: mainnet ? 'https://mempool.space' : 'https://mempool.space/signet',
   postageSats: 10_000,
   maxBodyBytes: 60_000,
-  dataDir: process.env.ORDINALS_DATA_DIR || path.join(os.homedir(), '.bridge-ordinals'),
-  port: Number(process.env.ORDINALS_PORT || 8790),
+  dataDir: env('ORDINALS_DATA_DIR', path.join(os.homedir(), '.bridge-ordinals')),
+  port: Number(env('ORDINALS_PORT', 8790)),
+  // ---- Abstract lock verification (keyless RPC reads) ----
+  lock: {
+    chainId: 2741,
+    rpc: env('ABSTRACT_RPC', 'https://api.mainnet.abs.xyz'),
+    // NftLockVault proxy used by the live site (docs bundle) — 0xe81D…99e5.
+    vault: env('ORDINALS_LOCK_VAULT', '0xe81DdAB112137112B8FeeB853e22BC4c38F999e5'),
+    // LayerZero eid the vault lock must target for an Ordinals delivery. NO Bitcoin/Ordinals peer exists on the
+    // vault today, so this is unset and every request is rejected until the contract side is decided.
+    destEid: env('ORDINALS_LOCK_DEST_EID', '') === '' ? null : Number(process.env.ORDINALS_LOCK_DEST_EID),
+    minConfirmations: Number(env('ORDINALS_LOCK_MIN_CONF', 12)),
+    skip: !mainnet && env('ORDINALS_SKIP_LOCK_CHECK', '') === '1', // signet test runs only; ignored on mainnet
+  },
 });
 
 export function assertNetwork(net) {
-  if (net === 'mainnet' || net === 'bitcoin') {
-    if (!CONFIG.mainnet) throw Object.assign(new Error('Mainnet Ordinals delivery is disabled (mainnet:false).'), { status: 403 });
-  }
-  if (net !== CONFIG.network) throw Object.assign(new Error(`Only ${CONFIG.network} is supported.`), { status: 400 });
+  if (net !== CONFIG.network) throw Object.assign(new Error(`Only ${CONFIG.network} is supported by this service.`), { status: 400 });
 }

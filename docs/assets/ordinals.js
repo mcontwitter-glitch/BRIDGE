@@ -1,15 +1,20 @@
-/* Bitcoin Ordinals destination (SIGNET TEST / pilot). Add-on like deliver.js; no dependencies.
-   Adds a "₿ Bitcoin Ordinals" chip to "2 · Destination", a receiving Taproot address field,
-   and sends { dest:'ordinals', recipient, ... } to the ordinals-delivery service.
-   ORDINALS.mainnet === false hard-blocks mainnet. While mainnet is off the Abstract NFT is NOT locked
-   (no mainnet tx); the service inscribes on Bitcoin signet. No Phantom. */
+/* Bitcoin Ordinals destination (MAINNET, pilot). Add-on like deliver.js; no dependencies.
+   Adds a "₿ Bitcoin Ordinals" chip to "2 · Destination" and a receiving Taproot (bc1p…) field.
+   Submit = real Abstract vault lock (prepayPush + safeTransferFrom, same calls as the main flow) → POST
+   { dest:'ordinals', recipient, lockTxHash, ... } to the ordinals-delivery service, which verifies the lock on
+   Abstract and inscribes the Ordinal. Gated: nothing is locked unless BRIDGE_ORDINALS_URL and
+   BRIDGE_ORDINALS_LOCK_EID are both set. Network: window.BRIDGE_ORDINALS_NETWORK ("mainnet" default | "signet"). No Phantom. */
 (function () {
   var ORDINALS = {
-    mainnet: false,
-    network: "signet",
-    deliveryUrl: (window.BRIDGE_ORDINALS_URL || ""), // empty until a host is approved → UI shows "Coming soon / pilot"
-    explorer: "https://mempool.space/signet",
+    mainnet: (window.BRIDGE_ORDINALS_NETWORK || "mainnet") === "mainnet",
+    network: window.BRIDGE_ORDINALS_NETWORK === "signet" ? "signet" : "mainnet",
+    deliveryUrl: (window.BRIDGE_ORDINALS_URL || ""), // empty until the service is hosted → submit disabled
+    // LayerZero eid the vault lock targets for Ordinals. The vault has no Bitcoin peer yet → unset → submit disabled.
+    lockEid: Number(window.BRIDGE_ORDINALS_LOCK_EID || 0),
+    vault: "0xe81DdAB112137112B8FeeB853e22BC4c38F999e5", // Abstract NftLockVault (same as the main bundle)
+    lzOptions: window.BRIDGE_ORDINALS_LZ_OPTIONS || "0x00030100110100000000000000000000000000030d40",
   };
+  ORDINALS.explorer = ORDINALS.network === "mainnet" ? "https://mempool.space" : "https://mempool.space/signet";
   window.bridgeOrdinalsConfig = ORDINALS;
 
   // ---- bech32 / bech32m (BIP-173/350) ----
@@ -54,8 +59,8 @@
     if (!(d.version === 1 && d.program.length === 32)) return { ok: false, level: "warn",
       msg: d.version === 0 ? "SegWit " + d.hrp + "1q… address. Ordinals can be lost here — use your wallet's Taproot (" + want + "1p…) ordinals address." : "Unsupported witness version. Use a Taproot address." };
     if (d.hrp !== want) return d.hrp === "bc"
-      ? { ok: false, level: "warn", msg: "Mainnet Taproot address. Mainnet delivery is not approved yet — this is a signet test. Use a signet tb1p… address." }
-      : { ok: false, level: "warn", msg: "Testnet/signet address. Use a mainnet bc1p… address." };
+      ? { ok: false, level: "warn", msg: "Mainnet address. This build delivers on signet — use a tb1p… address." }
+      : { ok: false, level: "warn", msg: "Testnet/signet address — not accepted. Use your mainnet Taproot (bc1p…) ordinals address." };
     return { ok: true, level: "ok", msg: "Valid " + ORDINALS.network + " Taproot address." };
   }
   window.bridgeCheckOrdinalsAddress = check;
@@ -117,19 +122,23 @@
     if (!card) return null;
     var g = function (s) { var e = card.querySelector(s); return e ? e.textContent.trim() : ""; };
     var img = card.querySelector("img");
-    return { name: g(".nft-meta strong"), collection: g(".nft-meta span"), tokenId: g(".token-id").replace(/^#/, ""), image: img ? img.src : "" };
+    // Card shows the collection name; resolve the contract from the page's "Collection: NAME · 0x22Fc…0A8A" line.
+    var addr = "", m = /0x([0-9a-fA-F]{4})\S*?([0-9a-fA-F]{4})\b/.exec((document.body.textContent.match(/Collection:[^\n]*/) || [""])[0]);
+    var known = [window.BRIDGE_ORDINALS_COLLECTION, "0x22Fc5BB9810Ef92db35acCea463693331bcD0A8A"];
+    for (var i = 0; m && i < known.length; i++) if (known[i] && known[i].slice(2, 6).toLowerCase() === m[1].toLowerCase() && known[i].slice(-4).toLowerCase() === m[2].toLowerCase()) addr = known[i];
+    return { name: g(".nft-meta strong"), collectionName: g(".nft-meta span"), collection: addr, tokenId: g(".token-id").replace(/^#/, ""), image: img ? img.src : "" };
   }
   function bridgeButton(panel) { return panel && panel.querySelector(".btn-primary.btn-lg"); }
 
   function renderField() {
     var c = check(state.addr), ws = wallets();
     field.innerHTML =
-      '<span class="pilot-badge">Coming soon / pilot · signet test</span>' +
+      '<span class="pilot-badge">Pilot</span>' +
       '<label for="btc-recipient">Receiving BTC address (Ordinals)<span class="muted"> (' + (ORDINALS.network === "mainnet" ? "bc1p…" : "signet tb1p…") + " Taproot)</span></label>" +
       '<input id="btc-recipient" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="' + (ORDINALS.network === "mainnet" ? "bc1p…" : "tb1p… (signet)") + '" aria-invalid="' + (!!state.addr && !c.ok) + '" value="' + esc(state.addr) + '">' +
       (c.msg ? '<p class="addr-check addr-' + c.level + '">' + esc(c.msg) + "</p>" : "") +
       (ws.length ? '<button type="button" class="btn btn-ghost btn-sm" data-ord-wallet="' + ws[0] + '">Use connected BTC wallet (' + ws[0] + ")</button>" : "") +
-      '<p class="hint">Only use a Taproot / Ordinals-capable wallet (Xverse, UniSat, Leather, OKX, Magic Eden). Signet test: the NFT is not locked on mainnet and the Ordinal is inscribed on Bitcoin signet, not mainnet.</p>' +
+      '<p class="hint">Only use a Taproot / Ordinals-capable wallet (Xverse, UniSat, Leather, OKX, Magic Eden). Your NFT is locked in the Abstract vault and inscribed as an Ordinal on Bitcoin.</p>' +
       (state.delivery ? '<div class="ord-box"><div><span>Delivery</span> <code>' + esc(state.delivery.id) + "</code> · <b>" + esc(state.delivery.status) + "</b></div>" +
         (state.delivery.commitTxid ? '<div><span>commit</span> <a target="_blank" rel="noreferrer" href="' + ORDINALS.explorer + "/tx/" + esc(state.delivery.commitTxid) + '"><code>' + esc(state.delivery.commitTxid) + "</code></a></div>" : "") +
         (state.delivery.revealTxid ? '<div><span>reveal</span> <a target="_blank" rel="noreferrer" href="' + ORDINALS.explorer + "/tx/" + esc(state.delivery.revealTxid) + '"><code>' + esc(state.delivery.revealTxid) + "</code></a></div>" : "") + "</div>" : "");
@@ -155,12 +164,14 @@
     if (!b) return;
     if (state.on) {
       if (!b.dataset.ordLabel) b.dataset.ordLabel = b.textContent;
-      var lbl = state.busy ? "Working…" : "Bridge to Ordinals (signet test)";
+      var g = gate();
+      var lbl = state.busy ? "Working…" : (g || "Bridge to Ordinals");
       if (b.textContent !== lbl) b.textContent = lbl;
-      var blk = (!check(state.addr).ok || !selectedNft()) ? "1" : "";
+      var blk = (g || !check(state.addr).ok || !selectedNft()) ? "1" : "";
       if (b.dataset.ordBlocked !== blk) { b.dataset.ordBlocked = blk; b.style.opacity = blk ? "0.55" : ""; }
+      if (b.disabled !== !!g) b.disabled = !!g;
     } else if (b.dataset.ordLabel) {
-      b.textContent = b.dataset.ordLabel; delete b.dataset.ordLabel; b.style.opacity = ""; b.dataset.ordBlocked = "";
+      b.textContent = b.dataset.ordLabel; delete b.dataset.ordLabel; b.style.opacity = ""; b.dataset.ordBlocked = ""; b.disabled = false;
     }
   }
   function setOn(on) {
@@ -172,31 +183,86 @@
     syncButton();
   }
 
+  /** Why Ordinals submit is blocked BEFORE any lock ('' = ready). */
+  function gate() {
+    if (!ORDINALS.deliveryUrl) return "Delivery service not live yet";
+    if (!ORDINALS.lockEid) return "Ordinals lock path not live yet";
+    return "";
+  }
+  window.bridgeOrdinalsGate = gate;
+
+  // ---- Abstract lock (EIP-1193, same vault calls as the main bundle: quoteLock → prepayPush → safeTransferFrom) ----
+  var h64 = function (x) { return String(x).replace(/^0x/, "").toLowerCase().padStart(64, "0"); };
+  var big = function (n) { return BigInt(n).toString(16); };
+  function encBytes(hex) { var d = hex.replace(/^0x/, ""); return h64(big(d.length / 2)) + d.padEnd(Math.ceil(d.length / 64) * 64, "0"); }
+  function provider() {
+    var p = window.ethereum; if (!p || !p.request) throw new Error("Connect an Abstract (EVM) wallet first.");
+    return p;
+  }
+  async function waitTx(p, hash) {
+    for (var i = 0; i < 120; i++) {
+      var r = await p.request({ method: "eth_getTransactionReceipt", params: [hash] });
+      if (r) { if (r.status !== "0x1") throw new Error("Abstract tx reverted: " + hash); return r; }
+      await new Promise(function (res) { setTimeout(res, 2000); });
+    }
+    throw new Error("Timed out waiting for " + hash);
+  }
+  async function lockOnAbstract(nft) {
+    var p = provider();
+    var from = (await p.request({ method: "eth_requestAccounts" }))[0];
+    if (parseInt(await p.request({ method: "eth_chainId" }), 16) !== 2741) throw new Error("Switch your wallet to Abstract first.");
+    var opts = ORDINALS.lzOptions, me = h64(from), eid = h64(big(ORDINALS.lockEid));
+    // quoteLock(address,uint256,uint32,address,bytes)
+    var q = await p.request({ method: "eth_call", params: [{ to: ORDINALS.vault, data: "0x8b31251e" + h64(nft.collection) + h64(big(nft.tokenId)) + eid + me + h64("a0") + encBytes(opts) }, "latest"] });
+    var fee = BigInt("0x" + q.slice(2, 66)) * 11n / 10n;
+    setStatus("Step 1/3: pay the bridge fee in your wallet…");
+    var t1 = await p.request({ method: "eth_sendTransaction", params: [{ from: from, to: ORDINALS.vault, value: "0x" + fee.toString(16), data: "0x8101dad6" + h64(nft.collection) + h64(big(nft.tokenId)) }] });
+    await waitTx(p, t1);
+    setStatus("Step 2/3: lock the NFT in the vault (confirm in your wallet)…");
+    // data = abi.encode(uint32 destEid, bytes32 recipient, bool solana=false, bytes options)
+    var data = eid + me + h64("0") + h64("80") + encBytes(opts);
+    var t2 = await p.request({ method: "eth_sendTransaction", params: [{ from: from, to: nft.collection,
+      data: "0xb88d4fde" + h64(from) + h64(ORDINALS.vault) + h64(big(nft.tokenId)) + h64("80") + encBytes("0x" + data) }] });
+    await waitTx(p, t2);
+    return t2;
+  }
+
   async function submit() {
-    var nft = selectedNft(), c = check(state.addr);
+    var nft = selectedNft(), c = check(state.addr), g = gate();
+    if (g) return setStatus(g + " — nothing was locked and no Ordinal was inscribed.");
     if (!nft) return setStatus("Select an NFT above first.");
     if (!c.ok) return setStatus(c.msg || "Enter a receiving BTC address (Ordinals).");
-    if (ORDINALS.network === "mainnet" && !ORDINALS.mainnet) return setStatus("Mainnet Ordinals delivery is disabled.");
-    var req = { dest: "ordinals", network: ORDINALS.network, recipient: state.addr.trim(), collection: nft.collection, tokenId: nft.tokenId,
-      tokenURI: "", image: nft.image, name: nft.name, lockTxHash: "0xsignettest" + Date.now().toString(16), lockId: nft.collection + "-" + nft.tokenId + "-ordinals", srcChainId: 2741, test: true };
-    window.bridgeOrdinalsLastRequest = req;
-    if (!ORDINALS.deliveryUrl) return setStatus("Coming soon / pilot — the Ordinals delivery service is not hosted yet (signet test). No request was sent and no Ordinal was inscribed.");
-    state.busy = true; syncButton(); setStatus("Signet test: sending delivery request…");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(nft.collection || "")) return setStatus("Could not read this NFT's contract address. Nothing was locked.");
+    state.busy = true; syncButton();
+    var req;
     try {
-      var r = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) });
-      var d = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(d.error || "Delivery service error " + r.status);
-      state.delivery = d; renderField();
-      for (var i = 0; i < 180 && d.status !== "delivered" && d.status !== "failed"; i++) {
-        setStatus("Signet test delivery " + d.status + "…");
+      // Service must be reachable BEFORE the NFT is locked.
+      var hr = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/health").then(function (r) { return r.json(); }).catch(function () { return null; });
+      if (!hr || !hr.ok || hr.network !== ORDINALS.network) throw new Error("Delivery service is not reachable right now. Nothing was locked.");
+      var lockTx = await lockOnAbstract(nft);
+      req = { dest: "ordinals", network: ORDINALS.network, recipient: state.addr.trim(), collection: nft.collection, tokenId: nft.tokenId,
+        tokenURI: "", image: nft.image, name: nft.name, lockTxHash: lockTx, srcChainId: 2741 };
+      window.bridgeOrdinalsLastRequest = req;
+      setStatus("Step 3/3: lock confirmed (" + lockTx.slice(0, 10) + "…). Requesting the Ordinal…");
+      var d;
+      for (var a = 0; a < 40; a++) { // the service needs the lock to reach its confirmation depth (HTTP 425)
+        var r = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) });
+        d = await r.json().catch(function () { return {}; });
+        if (r.status !== 425) { if (!r.ok) throw new Error((d.error || "Delivery service error " + r.status) + " Your lock tx: " + lockTx); break; }
+        setStatus("Waiting for Abstract confirmations on " + lockTx.slice(0, 10) + "…");
         await new Promise(function (res) { setTimeout(res, 5000); });
+      }
+      state.delivery = d; renderField();
+      for (var i = 0; i < 360 && d.status !== "delivered" && d.status !== "failed"; i++) {
+        setStatus("Ordinal delivery " + d.status + "…");
+        await new Promise(function (res) { setTimeout(res, 10000); });
         d = await (await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/" + encodeURIComponent(d.id))).json();
         state.delivery = d; renderField();
       }
-      if (d.status === "failed") throw new Error(d.error || "Delivery failed");
-      setStatus(d.status === "delivered" ? "Signet test Ordinal delivered: " + d.inscriptionId : "Signet test delivery " + d.status + ".", d.status === "delivered");
+      if (d.status === "failed") throw new Error((d.error || "Delivery failed") + " Your lock tx: " + lockTx);
+      setStatus(d.status === "delivered" ? "Ordinal delivered: " + d.inscriptionId : "Ordinal " + d.status + " — check the links above.", d.status === "delivered");
     } catch (e) {
-      setStatus("Coming soon / pilot — " + (e && e.message ? e.message : String(e)) + " No Ordinal was inscribed.");
+      setStatus((e && e.message ? e.message : String(e)));
     } finally { state.busy = false; syncButton(); }
   }
 
@@ -237,7 +303,7 @@
     if (p3 && !p3.hasAttribute("data-ord-p3")) p3.setAttribute("data-ord-p3", "");
     if (p3 && !p3.querySelector(".ord-note")) {
       var note = document.createElement("p"); note.className = "hint ord-note";
-      note.textContent = "Signet test: no Abstract lock is sent. The delivery service inscribes the NFT image + metadata as an Ordinal on Bitcoin signet (commit → reveal) and sends it to your Taproot address.";
+      note.textContent = "Pilot: your NFT is locked in the Abstract vault, then the delivery service verifies the lock and inscribes the NFT image + metadata as an Ordinal on Bitcoin (commit → reveal), sent to your Taproot address.";
       var h2 = p3.querySelector("h2"); if (h2) h2.insertAdjacentElement("afterend", note);
     }
     syncButton();

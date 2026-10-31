@@ -15,3 +15,5 @@ export function create(fields) {
   const all = readAll(); all[id] = rec; writeAll(all); return rec;
 }
 export function patch(id, fields) { const all = readAll(); all[id] = { ...all[id], ...fields, updatedAt: new Date().toISOString() }; writeAll(all); return all[id]; }
+/** True if a lock tx hash or lockId was already claimed by a non-failed-before-verify delivery (any status). */
+export const isUsed = (key) => list().some((r) => r.lockTxHash?.toLowerCase() === key || r.lockId?.toLowerCase() === key);

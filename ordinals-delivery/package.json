@@ -2,18 +2,22 @@
   "name": "bridge-ordinals-delivery",
   "private": true,
   "type": "module",
-  "description": "Bitcoin Ordinals delivery for Bridge.bigfoot404.biz (signet test only; mainnet hard-blocked)",
+  "description": "Bitcoin Ordinals delivery for Bridge.bigfoot404.biz (mainnet by default; ORDINALS_NETWORK=signet for tests)",
   "scripts": {
     "keygen": "node src/keygen.js",
     "address": "node src/keygen.js --show",
     "start": "node src/server.js",
     "deliver": "node src/cli.js",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "estimate": "node src/estimate.js"
   },
   "dependencies": {
     "@bitcoinerlab/secp256k1": "^1.1.1",
+    "@noble/hashes": "^1.8.0",
     "bitcoinjs-lib": "^6.1.7",
     "ecpair": "^2.1.0"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

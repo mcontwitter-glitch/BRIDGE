@@ -1,5 +1,5 @@
 # Bitcoin Ordinals adapter
 
-Destination key `ordinals`. Request payload (same `recipient` field as Solana/Sui):
-`{ dest:'ordinals', network:'signet', recipient:'tb1p…', collection, tokenId, tokenURI, image, name, lockTxHash, lockId, srcChainId, test:true }`.
-Implementation: `../../ordinals-delivery` (signet test only, mainnet hard-blocked). UI: `docs/assets/ordinals.js`.
+Destination key `ordinals`, Bitcoin mainnet (signet via config). Request payload:
+`{ dest:'ordinals', network:'mainnet', recipient:'bc1p…', collection:'0x…', tokenId, tokenURI, image, name, lockTxHash, srcChainId:2741 }`.
+Implementation: `../../ordinals-delivery` (lock verification in `src/lock.js`). UI: `docs/assets/ordinals.js`.
