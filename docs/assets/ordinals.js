@@ -9,8 +9,10 @@
     mainnet: (window.BRIDGE_ORDINALS_NETWORK || "mainnet") === "mainnet",
     network: window.BRIDGE_ORDINALS_NETWORK === "signet" ? "signet" : "mainnet",
     deliveryUrl: (window.BRIDGE_ORDINALS_URL || ""), // empty until the service is hosted → submit disabled
-    // LayerZero eid the vault lock targets for Ordinals. The vault has no Bitcoin peer yet → unset → submit disabled.
-    lockEid: Number(window.BRIDGE_ORDINALS_LOCK_EID || 0),
+    // Ordinals route = OrdinalsSink on Arbitrum One (LayerZero eid 30110; receive-only, mints nothing).
+    // Disabled until BRIDGE_ORDINALS_SINK is set to the deployed sink (and the vault owner ran setPeer(30110, sink)).
+    sink: /^0x[0-9a-fA-F]{40}$/.test(window.BRIDGE_ORDINALS_SINK || "") ? window.BRIDGE_ORDINALS_SINK : "",
+    lockEid: Number(window.BRIDGE_ORDINALS_LOCK_EID || (/^0x[0-9a-fA-F]{40}$/.test(window.BRIDGE_ORDINALS_SINK || "") ? 30110 : 0)),
     vault: "0xe81DdAB112137112B8FeeB853e22BC4c38F999e5", // Abstract NftLockVault (same as the main bundle)
     lzOptions: window.BRIDGE_ORDINALS_LZ_OPTIONS || "0x00030100110100000000000000000000000000030d40",
   };
@@ -200,10 +202,52 @@
   /** Why Ordinals submit is blocked BEFORE any lock ('' = ready). */
   function gate() {
     if (!ORDINALS.deliveryUrl) return "Delivery service not live yet";
-    if (!ORDINALS.lockEid) return "Ordinals lock path not live yet";
+    if (!ORDINALS.lockEid || !ORDINALS.sink) return "Ordinals lock path not live yet";
     return "";
   }
   window.bridgeOrdinalsGate = gate;
+
+  // ---- keccak-256 (Ethereum) and the bc1p commitment used as the lock's EVM recipient ----
+  // recipient = low 20 bytes of keccak256("BIGFOOT404-ORDINALS-V1:" + lowercase bc1p) — same as
+  // OrdinalsSink.ordinalsRecipient and ordinals-delivery ordinalsCommitment. No key exists for it; it binds the address.
+  var RC = [1,0,32898,0,32906,2147483648,2147516416,2147483648,32907,0,2147483649,0,2147516545,2147483648,32777,2147483648,138,0,136,0,2147516425,0,2147483658,0,2147516555,0,139,2147483648,32905,2147483648,32771,2147483648,32770,2147483648,128,2147483648,32778,0,2147483658,2147483648,2147516545,2147483648,32896,2147483648,2147483649,0,2147516424,2147483648];
+  function keccakF(s) {
+    var c = new Array(10), b = new Array(50), h, l, n, x, y;
+    for (n = 0; n < 48; n += 2) {
+      for (x = 0; x < 10; x++) c[x] = s[x] ^ s[x + 10] ^ s[x + 20] ^ s[x + 30] ^ s[x + 40];
+      for (x = 0; x < 10; x += 2) {
+        var x1 = (x + 2) % 10, x4 = (x + 8) % 10;
+        h = c[x4] ^ ((c[x1] << 1) | (c[x1 + 1] >>> 31)); l = c[x4 + 1] ^ ((c[x1 + 1] << 1) | (c[x1] >>> 31));
+        for (y = 0; y < 50; y += 10) { s[y + x] ^= h; s[y + x + 1] ^= l; }
+      }
+      // rho + pi
+      for (x = 0; x < 5; x++) for (y = 0; y < 5; y++) {
+        var i = 2 * (x + 5 * y), r = ROT[x + 5 * y], j = 2 * (y + 5 * ((2 * x + 3 * y) % 5)), lo = s[i], hi = s[i + 1];
+        if (r >= 32) { var t = lo; lo = hi; hi = t; r -= 32; }
+        b[j] = r ? ((lo << r) | (hi >>> (32 - r))) : lo; b[j + 1] = r ? ((hi << r) | (lo >>> (32 - r))) : hi;
+      }
+      for (y = 0; y < 50; y += 10) for (x = 0; x < 10; x++) s[y + x] = b[y + x] ^ (~b[y + (x + 2) % 10] & b[y + (x + 4) % 10]);
+      s[0] ^= RC[n]; s[1] ^= RC[n + 1];
+    }
+  }
+  var ROT = [0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
+  function keccak256(bytes) {
+    var s = new Array(50).fill(0), rate = 136, p = bytes.slice(), i, k;
+    p.push(1); while (p.length % rate) p.push(0); p[p.length - 1] |= 0x80;
+    for (k = 0; k < p.length; k += rate) {
+      for (i = 0; i < rate / 4; i++) s[i] ^= p[k + 4 * i] | (p[k + 4 * i + 1] << 8) | (p[k + 4 * i + 2] << 16) | (p[k + 4 * i + 3] << 24);
+      keccakF(s);
+    }
+    var out = "";
+    for (i = 0; i < 8; i++) for (k = 0; k < 4; k++) out += ("0" + ((s[i] >>> (8 * k)) & 255).toString(16)).slice(-2);
+    return out;
+  }
+  function ordinalsCommitment(btc) {
+    var str = "BIGFOOT404-ORDINALS-V1:" + String(btc).trim().toLowerCase(), bytes = [];
+    for (var i = 0; i < str.length; i++) bytes.push(str.charCodeAt(i) & 255); // bech32 is ASCII
+    return "0x" + keccak256(bytes).slice(24);
+  }
+  window.bridgeOrdinalsCommitment = ordinalsCommitment;
 
   // ---- Abstract lock (EIP-1193, same vault calls as the main bundle: quoteLock → prepayPush → safeTransferFrom) ----
   var h64 = function (x) { return String(x).replace(/^0x/, "").toLowerCase().padStart(64, "0"); };
@@ -221,11 +265,12 @@
     }
     throw new Error("Timed out waiting for " + hash);
   }
-  async function lockOnAbstract(nft) {
+  async function lockOnAbstract(nft, btc) {
     var p = provider();
     var from = (await p.request({ method: "eth_requestAccounts" }))[0];
     if (parseInt(await p.request({ method: "eth_chainId" }), 16) !== 2741) throw new Error("Switch your wallet to Abstract first.");
-    var opts = ORDINALS.lzOptions, me = h64(from), eid = h64(big(ORDINALS.lockEid));
+    // Recipient is the bc1p commitment, not the wallet: the lock itself proves which Taproot address gets the Ordinal.
+    var opts = ORDINALS.lzOptions, me = h64(ordinalsCommitment(btc)), eid = h64(big(ORDINALS.lockEid));
     // quoteLock(address,uint256,uint32,address,bytes)
     var q = await p.request({ method: "eth_call", params: [{ to: ORDINALS.vault, data: "0x8b31251e" + h64(nft.collection) + h64(big(nft.tokenId)) + eid + me + h64("a0") + encBytes(opts) }, "latest"] });
     var fee = BigInt("0x" + q.slice(2, 66)) * 11n / 10n;
@@ -256,7 +301,7 @@
       if (hr.mode === "recursive" && hr.setup && !Object.keys(hr.setup).some(function (k) { return hr.setup[k] === "inscribed"; })) throw new Error("Collection setup not inscribed on Bitcoin yet. Nothing was locked.");
       var est = await loadEstimate();
       if (est) setStatus("Est. Bitcoin cost ~$" + Number(est.usd).toFixed(2) + (est.underCap ? "" : " — above the limit now, your Ordinal will wait for lower Bitcoin fees") + ". Confirm the lock in your wallet…");
-      var lockTx = await lockOnAbstract(nft);
+      var lockTx = await lockOnAbstract(nft, state.addr.trim());
       req = { dest: "ordinals", network: ORDINALS.network, recipient: state.addr.trim(), collection: nft.collection, tokenId: nft.tokenId,
         tokenURI: "", image: nft.image, name: nft.name, lockTxHash: lockTx, srcChainId: 2741 };
       window.bridgeOrdinalsLastRequest = req;

@@ -32,9 +32,15 @@ export const CONFIG = Object.freeze({
     rpc: env('ABSTRACT_RPC', 'https://api.mainnet.abs.xyz'),
     // NftLockVault proxy used by the live site (docs bundle) — 0xe81D…99e5.
     vault: env('ORDINALS_LOCK_VAULT', '0xe81DdAB112137112B8FeeB853e22BC4c38F999e5'),
-    // LayerZero eid the vault lock must target for an Ordinals delivery. NO Bitcoin/Ordinals peer exists on the
-    // vault today, so this is unset and every request is rejected until the contract side is decided.
-    destEid: env('ORDINALS_LOCK_DEST_EID', '') === '' ? null : Number(process.env.ORDINALS_LOCK_DEST_EID),
+    // Ordinals destination = OrdinalsSink on Arbitrum One (LayerZero eid 30110), a receive-only OApp that mints nothing.
+    // Disabled (null) until the sink is deployed AND the vault owner has run setPeer(30110, sink):
+    // set ORDINALS_SINK_ADDRESS to the deployed sink. ORDINALS_LOCK_DEST_EID still overrides the eid (tests).
+    sinkEid: 30110,
+    sinkAddress: /^0x[0-9a-fA-F]{40}$/.test(env('ORDINALS_SINK_ADDRESS', '')) ? process.env.ORDINALS_SINK_ADDRESS.toLowerCase() : null,
+    destEid: env('ORDINALS_LOCK_DEST_EID', '') !== '' ? Number(process.env.ORDINALS_LOCK_DEST_EID)
+      : (/^0x[0-9a-fA-F]{40}$/.test(env('ORDINALS_SINK_ADDRESS', '')) ? 30110 : null),
+    // The lock's EVM recipient must be ordinalsCommitment(bc1p) (binds the Taproot address on-chain).
+    requireCommitment: true,
     minConfirmations: Number(env('ORDINALS_LOCK_MIN_CONF', 12)),
     skip: !mainnet && env('ORDINALS_SKIP_LOCK_CHECK', '') === '1', // signet test runs only; ignored on mainnet
   },

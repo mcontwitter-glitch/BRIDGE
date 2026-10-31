@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { CONFIG, assertNetwork } from '../src/config.js';
 import { assertTaprootRecipient, ECPair, xonly, bitcoin } from '../src/btc.js';
 import { envelope, cbor } from '../src/inscribe.js';
-import { verifyLock, NFT_LOCKED_TOPIC } from '../src/lock.js';
+import { verifyLock, NFT_LOCKED_TOPIC, ordinalsCommitment } from '../src/lock.js';
 
 const k = ECPair.makeRandom();
 const addr = (pay, net) => bitcoin.payments[pay](pay === 'p2tr' ? { internalPubkey: xonly(k.publicKey), network: net } : { pubkey: k.publicKey, network: net }).address;
@@ -30,18 +30,19 @@ test('envelope shape', () => {
 
 // ---- lock verification against a mocked Abstract RPC ----
 const VAULT = '0xe81ddab112137112b8feeb853e22bc4c38f999e5', COLL = '0x22fc5bb9810ef92db35accea463693331bcd0a8a';
-const TX = '0x' + 'ab'.repeat(32), LOCKID = '0x' + 'cd'.repeat(32), EID = 40999;
+const TX = '0x' + 'ab'.repeat(32), LOCKID = '0x' + 'cd'.repeat(32), EID = 30110;
+const BTC = 'bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9';
 const pad = (h) => h.replace(/^0x/, '').padStart(64, '0');
 const cfg = { ...CONFIG.lock, vault: VAULT, destEid: EID, minConfirmations: 12 };
-function rpcMock({ status = '0x1', block = 100, head = 200, eid = EID, tokenId = 7, active = 1, from = VAULT, missing = false } = {}) {
+function rpcMock({ commit = ordinalsCommitment(BTC), status = '0x1', block = 100, head = 200, eid = EID, tokenId = 7, active = 1, from = VAULT, missing = false } = {}) {
   return async (m, p) => {
     if (m === 'eth_getTransactionReceipt') return missing ? null : { status, blockNumber: '0x' + block.toString(16), logs: [{ address: from,
-      topics: [NFT_LOCKED_TOPIC, LOCKID, '0x' + pad(COLL), '0x' + pad(tokenId.toString(16))], data: '0x' + pad('11'.repeat(20)) + pad(eid.toString(16)) + pad('e0') }] };
+      topics: [NFT_LOCKED_TOPIC, LOCKID, '0x' + pad(COLL), '0x' + pad(tokenId.toString(16))], data: '0x' + pad('11'.repeat(20)) + pad(eid.toString(16)) + pad('80') + pad(commit) }] };
     if (m === 'eth_blockNumber') return '0x' + head.toString(16);
     if (m === 'eth_call') return '0x' + [COLL, '7', '11', eid.toString(16), 'c0', String(active)].map(pad).join('');
   };
 }
-const req = { lockTxHash: TX, collection: COLL, tokenId: 7 };
+const req = { lockTxHash: TX, collection: COLL, tokenId: 7, recipient: BTC };
 test('lock verify accepts a confirmed, active vault lock to the Ordinals eid', async () => {
   const r = await verifyLock(req, { rpc: rpcMock(), cfg });
   assert.strictEqual(r.lockId, LOCKID); assert.strictEqual(r.destEid, EID);
@@ -57,6 +58,19 @@ test('lock verify rejects bad locks', async () => {
   await bad({ eid: 30101 }, /not the Ordinals eid/);
   await bad({ active: 0 }, /no longer active/);
   await assert.rejects(verifyLock(req, { rpc: rpcMock(), cfg: { ...cfg, destEid: null } }), /not configured/);
+});
+test('OrdinalsSink: commitment matches the Solidity vector; lock must commit to the requested bc1p', async () => {
+  assert.strictEqual(ordinalsCommitment(BTC), '0xbbd71217bacde58264872802f5333865a5bd8d4b'); // cast keccak "BIGFOOT404-ORDINALS-V1:<bc1p>" low 20 bytes
+  assert.strictEqual(ordinalsCommitment(BTC.toUpperCase()), ordinalsCommitment(BTC));
+  const other = 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr';
+  await assert.rejects(verifyLock({ ...req, recipient: other }, { rpc: rpcMock(), cfg }), /does not commit/);
+  await assert.rejects(verifyLock(req, { rpc: rpcMock({ commit: '11'.repeat(20) }), cfg }), /does not commit/);
+  await assert.rejects(verifyLock({ ...req, recipient: '' }, { rpc: rpcMock(), cfg }), /recipient/);
+});
+test('Ordinals eid stays disabled until the sink address is set', async () => {
+  const { CONFIG: C } = await import('../src/config.js');
+  if (!process.env.ORDINALS_SINK_ADDRESS && !process.env.ORDINALS_LOCK_DEST_EID) assert.strictEqual(C.lock.destEid, null);
+  assert.strictEqual(C.lock.sinkEid, 30110);
 });
 test('lock verify rejects duplicate lockTx / lockId reuse', async () => {
   await assert.rejects(verifyLock(req, { rpc: rpcMock(), cfg, isUsed: (x) => x === TX }), /already used/);

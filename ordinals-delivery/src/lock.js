@@ -5,6 +5,12 @@ import { CONFIG } from './config.js';
 const hex = (b) => '0x' + Buffer.from(b).toString('hex');
 export const NFT_LOCKED_TOPIC = hex(keccak_256('NftLocked(bytes32,address,uint256,address,uint32,string,address)'));
 const LOCKS_SELECTOR = hex(keccak_256('locks(bytes32)')).slice(0, 10);
+// Must match OrdinalsSink.ordinalsRecipient / docs/assets/ordinals.js.
+export const COMMIT_PREFIX = 'BIGFOOT404-ORDINALS-V1:';
+export function ordinalsCommitment(btcAddress) {
+  const h = keccak_256(new TextEncoder().encode(COMMIT_PREFIX + String(btcAddress).trim().toLowerCase()));
+  return '0x' + Buffer.from(h.slice(12)).toString('hex');
+}
 const err = (m, status = 400) => Object.assign(new Error(m), { status });
 const word = (data, i) => data.slice(2 + i * 64, 2 + (i + 1) * 64);
 const addrOf = (w) => '0x' + w.slice(24).toLowerCase();
@@ -24,10 +30,10 @@ export function makeRpc(url = CONFIG.lock.rpc) {
  * collection+tokenId with destEid == configured Ordinals eid, the lock is still active, and the tx/lockId was not
  * used before (isUsed callback). Returns { lockId, owner, tokenURI, destEid, blockNumber }.
  */
-export async function verifyLock({ lockTxHash, collection, tokenId }, { rpc = makeRpc(), isUsed = () => false, cfg = CONFIG.lock } = {}) {
+export async function verifyLock({ lockTxHash, collection, tokenId, recipient }, { rpc = makeRpc(), isUsed = () => false, cfg = CONFIG.lock } = {}) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(String(lockTxHash || ''))) throw err('lockTxHash must be a 32-byte tx hash');
   if (!/^0x[0-9a-fA-F]{40}$/.test(String(collection || ''))) throw err('collection must be the NFT contract address');
-  if (cfg.destEid == null) throw err('Ordinals lock path not configured: the vault has no Bitcoin/Ordinals destination (ORDINALS_LOCK_DEST_EID unset).', 503);
+  if (cfg.destEid == null) throw err('Ordinals lock path not configured: OrdinalsSink not deployed yet (ORDINALS_SINK_ADDRESS unset).', 503);
   const tx = lockTxHash.toLowerCase();
   if (isUsed(tx)) throw err('lockTxHash already used for a delivery', 409);
   const rc = await rpc('eth_getTransactionReceipt', [tx]);
@@ -42,6 +48,11 @@ export async function verifyLock({ lockTxHash, collection, tokenId }, { rpc = ma
   if (!log) throw err('no NftLocked event from the vault for this collection/tokenId in that tx');
   const destEid = parseInt(word(log.data, 1), 16);
   if (destEid !== cfg.destEid) throw err(`lock targets eid ${destEid}, not the Ordinals eid ${cfg.destEid}`);
+  if (cfg.requireCommitment !== false) {
+    // NftLocked data: owner, destEid, tokenURI offset, recipient (word 3).
+    if (!recipient) throw err('recipient (bc1p) required');
+    if (addrOf(word(log.data, 3)) !== ordinalsCommitment(recipient)) throw err('lock recipient does not commit to this BTC address (expected ordinalsCommitment(bc1p))', 403);
+  }
   const lockId = log.topics[1];
   if (isUsed(lockId.toLowerCase())) throw err('lockId already used for a delivery', 409);
   const rec = await rpc('eth_call', [{ to: cfg.vault, data: LOCKS_SELECTOR + lockId.slice(2) }, 'latest']);

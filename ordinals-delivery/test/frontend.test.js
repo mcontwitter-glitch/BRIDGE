@@ -25,7 +25,10 @@ test('front end: no delivery service → submit blocked before any lock', () => 
   const w = load();
   assert.strictEqual(w.bridgeOrdinalsGate(), 'Delivery service not live yet');
   assert.strictEqual(load({ BRIDGE_ORDINALS_URL: 'https://x' }).bridgeOrdinalsGate(), 'Ordinals lock path not live yet');
-  assert.strictEqual(load({ BRIDGE_ORDINALS_URL: 'https://x', BRIDGE_ORDINALS_LOCK_EID: 40999 }).bridgeOrdinalsGate(), '');
+  assert.strictEqual(load({ BRIDGE_ORDINALS_URL: 'https://x', BRIDGE_ORDINALS_LOCK_EID: 40999 }).bridgeOrdinalsGate(), 'Ordinals lock path not live yet');
+  const live = load({ BRIDGE_ORDINALS_URL: 'https://x', BRIDGE_ORDINALS_SINK: '0x' + '5a'.repeat(20) });
+  assert.strictEqual(live.bridgeOrdinalsGate(), '');
+  assert.strictEqual(live.bridgeOrdinalsConfig.lockEid, 30110);
 });
 test('front end: USD estimate for the active mode is read before locking', async () => {
   const w = load({ BRIDGE_ORDINALS_URL: 'https://x' });
@@ -37,4 +40,13 @@ test('front end: USD estimate for the active mode is read before locking', async
   const e = await w2.bridgeOrdinalsEstimate();
   assert.deepStrictEqual({ ...e }, { usd: 0.85, sats: 1098, underCap: true, feeRate: 1, mode: 'recursive', marginUsd: 18 });
   assert.strictEqual(await w.bridgeOrdinalsEstimate(), null); // no fetch in that sandbox → null, never throws
+});
+
+test('front end: bc1p commitment matches the service and the Solidity vector', async () => {
+  const { ordinalsCommitment } = await import('../src/lock.js');
+  const w = load();
+  const B = 'bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9';
+  assert.strictEqual(w.bridgeOrdinalsCommitment(B), '0xbbd71217bacde58264872802f5333865a5bd8d4b');
+  for (const a of [B.toUpperCase(), 'bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297', 'x'.repeat(200)])
+    assert.strictEqual(w.bridgeOrdinalsCommitment(a), ordinalsCommitment(a)); // 200 chars crosses the 136-byte block
 });
