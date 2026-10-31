@@ -271,7 +271,7 @@
       }
       state.delivery = d; renderField();
       for (var i = 0; i < 360 && d.status !== "delivered" && d.status !== "failed"; i++) {
-        setStatus(d.status === "queued" ? (d.waiting || "Waiting for lower Bitcoin fees") + (d.estUsd != null ? " (now ~$" + d.estUsd + ")" : "") + ". Your NFT is safely locked; we retry automatically." : "Ordinal delivery " + d.status + "…");
+        setStatus(d.status === "queued" ? (d.waiting || "Waiting for lower Bitcoin fees") + (d.estUsd != null ? " (now ~$" + d.estUsd + ")" : "") + ". Your NFT is safely locked; we retry automatically." : (d.waiting ? d.waiting : "Ordinal delivery " + d.status + "…"));
         await new Promise(function (res) { setTimeout(res, 10000); });
         d = await (await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/" + encodeURIComponent(d.id))).json();
         state.delivery = d; renderField();

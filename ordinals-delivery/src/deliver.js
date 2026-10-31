@@ -1,6 +1,6 @@
 import { CONFIG, assertNetwork } from './config.js';
-import { loadKey, assertTaprootRecipient, txStatus } from './btc.js';
-import { inscribe } from './inscribe.js';
+import { loadKey, assertTaprootRecipient, txStatus, broadcast, feeRate } from './btc.js';
+import { inscribe, broadcastWithRetry, buildSweep } from './inscribe.js';
 import * as store from './store.js';
 import { verifyLock } from './lock.js';
 import { shrinkImage } from './image.js';
@@ -75,24 +75,70 @@ export async function startDelivery(req) {
 }
 
 const running = new Set();
-/** Inscribe one pending/queued delivery. Over the USD cap → stays 'queued' (nothing signed); retried by retryQueued(). */
+export const MAX_REVEAL_ATTEMPTS = Number(process.env.ORDINALS_MAX_REVEAL_ATTEMPTS || 6); // × retry loop (10 min) ≈ 1 h
+const RETRYABLE = ['pending', 'queued', 'revealing'];
+
+/** Inscribe one pending/queued delivery, or finish a 'revealing' one. Over the USD cap or unfunded → 'queued' (nothing signed). */
 export async function run(id, deps = {}) {
   if (running.has(id)) return store.get(id);
   running.add(id);
   try {
     const rec = store.get(id);
-    if (!rec || !['pending', 'queued'].includes(rec.status)) return rec;
+    if (!rec || !RETRYABLE.includes(rec.status)) return rec;
+    if (rec.status === 'revealing') return await recoverReveal(rec, deps);
     const content = rec.content ? { ...rec.content, body: Buffer.from(rec.content.body, 'base64') } : await (deps.loadContent || loadContent)(rec.req);
     if (!rec.content) store.patch(id, { content: { contentType: content.contentType, body: content.body.toString('base64'), metadata: content.metadata } });
-    const r = await (deps.inscribe || inscribe)({ key: (deps.loadKey || loadKey)(), recipient: rec.recipient, ...content, onCommit: (commitTxid) => store.patch(id, { commitTxid }) });
+    // onCommit fires BEFORE the commit is broadcast: both signed txs are on disk, status 'revealing' until the reveal lands.
+    const r = await (deps.inscribe || inscribe)({ key: (deps.loadKey || loadKey)(), recipient: rec.recipient, ...content,
+      onCommit: (c) => store.patch(id, { status: 'revealing', ...c, revealAttempts: 0, waiting: undefined }) });
     return store.patch(id, { status: 'inscribed', ...r, waiting: undefined, contentType: content.contentType, bytes: content.body.length });
   } catch (e) {
+    const cur = store.get(id);
+    if (e.revealPending || cur?.status === 'revealing') return store.patch(id, { status: 'revealing', revealAttempts: (cur?.revealAttempts || 0) + 1, waiting: `Reveal broadcast pending (commit ${cur?.commitTxid || e.commitTxid}); retrying: ${e.message}`, lastTry: new Date().toISOString() });
+    if (e.needsFunding) return store.patch(id, { status: 'queued', waiting: 'Inscriber wallet needs funding', detail: e.message, lastTry: new Date().toISOString() });
     if (e.queued) return store.patch(id, { status: 'queued', waiting: e.message, estUsd: e.usd != null ? Math.round(e.usd * 100) / 100 : undefined, lastTry: new Date().toISOString() });
     return store.patch(id, { status: 'failed', error: e.message });
   } finally { running.delete(id); }
 }
+
+/**
+ * Recovery for a commit whose reveal did not land: re-broadcast the stored commit (no-op if known) and reveal.
+ * After MAX_REVEAL_ATTEMPTS with a confirmed commit, sweep the commit output back to the inscriber wallet
+ * (status 'swept', sweepTxid recorded, then re-queued so a fresh inscription is attempted). Funds are never dropped.
+ */
+export async function recoverReveal(rec, deps = {}) {
+  const bc = deps.broadcast || broadcast;
+  const st = deps.txStatus || txStatus;
+  const attempts = (rec.revealAttempts || 0) + 1;
+  try {
+    if (rec.commitHex) await broadcastWithRetry(rec.commitHex, { bcast: bc, tries: 1 });
+    await broadcastWithRetry(rec.revealHex, { bcast: bc, tries: deps.revealTries ?? 2, waitMs: deps.waitMs ?? 1500 });
+    return store.patch(rec.id, { status: 'inscribed', inscriptionId: `${rec.revealTxid}i0`, revealAttempts: attempts, waiting: undefined, recovered: true });
+  } catch (e) {
+    let commitConfirmed = false; try { commitConfirmed = !!(await st(rec.commitTxid)).confirmed; } catch {}
+    if (attempts >= MAX_REVEAL_ATTEMPTS && commitConfirmed && rec.leafHex) {
+      const sw = buildSweep({ key: (deps.loadKey || loadKey)(), commitTxid: rec.commitTxid, commitValue: rec.commitValue, leafHex: rec.leafHex, rate: await (deps.feeRate || feeRate)() });
+      store.patch(rec.id, { status: 'sweeping', sweepHex: sw.hex, sweepTxid: sw.txid, revealAttempts: attempts, revealError: e.message });
+      await broadcastWithRetry(sw.hex, { bcast: bc, tries: 2, waitMs: deps.waitMs ?? 1500 }); // throws → stays 'sweeping' (hex on disk), see refresh/retry
+      // Funds are back in the wallet; queue a fresh inscription attempt (new commit/reveal) on the next loop.
+      return store.patch(rec.id, { status: 'queued', waiting: `Reveal failed ${attempts}×; commit swept back to the inscriber wallet (${sw.txid}). Retrying inscription.`,
+        swept: [...(rec.swept || []), { commitTxid: rec.commitTxid, sweepTxid: sw.txid }], commitTxid: undefined, commitHex: undefined, revealTxid: undefined, revealHex: undefined, leafHex: undefined, revealAttempts: 0 });
+    }
+    return store.patch(rec.id, { status: 'revealing', revealAttempts: attempts, waiting: `Reveal broadcast pending (commit ${rec.commitTxid}); retrying: ${e.message}`, lastTry: new Date().toISOString() });
+  }
+}
+/** Broadcast a stored sweep that did not go out yet. */
+export async function retrySweep(rec, deps = {}) {
+  try { await broadcastWithRetry(rec.sweepHex, { bcast: deps.broadcast || broadcast, tries: 1 }); }
+  catch (e) { return store.patch(rec.id, { waiting: `Sweep ${rec.sweepTxid} broadcast pending: ${e.message}`, lastTry: new Date().toISOString() }); }
+  return store.patch(rec.id, { status: 'queued', waiting: `Commit swept back to the inscriber wallet (${rec.sweepTxid}). Retrying inscription.`,
+    swept: [...(rec.swept || []), { commitTxid: rec.commitTxid, sweepTxid: rec.sweepTxid }], commitTxid: undefined, commitHex: undefined, revealTxid: undefined, revealHex: undefined, leafHex: undefined, revealAttempts: 0 });
+}
 export async function retryQueued(deps) {
-  for (const r of store.list().filter((x) => x.status === 'queued')) await run(r.id, deps);
+  for (const r of store.list()) {
+    if (r.status === 'sweeping') await retrySweep(r, deps);
+    else if (['queued', 'revealing'].includes(r.status)) await run(r.id, deps);
+  }
 }
 
 /** inscribed → delivered once the reveal (which pays the recipient) confirms. */

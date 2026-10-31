@@ -59,7 +59,7 @@ console.log(`plan: ${path.join(out, 'plan.json')}`);
 if (!broadcastMode) { console.log('DRY RUN: nothing signed or broadcast. Manifest not written.'); process.exit(0); }
 
 // ---- --broadcast: resumable. Inscribes pending layers (one per confirmed funding UTXO set), then the renderer. ----
-const { inscribe } = await import('./inscribe.js');
+const { inscribe, broadcastWithRetry } = await import('./inscribe.js');
 const { loadKey, fundingAddress } = await import('./btc.js');
 const key = loadKey();
 const mp = path.join(collectionsDir(), `${slug}.manifest.json`);
@@ -69,7 +69,15 @@ const self = fundingAddress(key);
 try {
   for (const f of uniq) {
     if (man.files[f.sha256]) continue;
-    const r = await inscribe({ key, recipient: self, contentType: f.contentType, body: fs.readFileSync(path.join(out, f.file)), metadata: null });
+    man.pending ??= {};
+    const p = man.pending[f.sha256];
+    if (p) { // a previous run committed but the reveal did not land: finish it instead of paying again
+      await broadcastWithRetry(p.commitHex, { tries: 1 }); await broadcastWithRetry(p.revealHex);
+      man.files[f.sha256] = `${p.revealTxid}i0`; delete man.pending[f.sha256]; save(); continue;
+    }
+    const r = await inscribe({ key, recipient: self, contentType: f.contentType, body: fs.readFileSync(path.join(out, f.file)), metadata: null,
+      onCommit: (c) => { man.pending[f.sha256] = c; save(); } });
+    delete man.pending[f.sha256];
     man.files[f.sha256] = r.inscriptionId; save();
     console.log(`layer ${f.sha256.slice(0, 12)} → ${r.inscriptionId}`);
   }

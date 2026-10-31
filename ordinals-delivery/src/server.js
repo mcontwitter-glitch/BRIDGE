@@ -9,7 +9,7 @@ import { feeRate, btcUsd } from './btc.js';
 
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
 const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(body)); };
-const pub = (r) => r && { id: r.id, status: r.status, waiting: r.waiting, estUsd: r.estUsd, costUsd: r.costUsd, network: r.network, recipient: r.recipient, commitTxid: r.commitTxid, revealTxid: r.revealTxid, inscriptionId: r.inscriptionId, error: r.error };
+const pub = (r) => r && { id: r.id, sweepTxid: r.sweepTxid, status: r.status, waiting: r.waiting, estUsd: r.estUsd, costUsd: r.costUsd, network: r.network, recipient: r.recipient, commitTxid: r.commitTxid, revealTxid: r.revealTxid, inscriptionId: r.inscriptionId, error: r.error };
 
 http.createServer(async (req, res) => {
   try {
@@ -26,4 +26,5 @@ http.createServer(async (req, res) => {
     send(res, 404, { error: 'not found' });
   } catch (e) { send(res, e.status || 500, { error: e.message }); }
 }).listen(CONFIG.port, '127.0.0.1', () => console.log(`ordinals-delivery (${CONFIG.network}, mainnet:${CONFIG.mainnet}) on 127.0.0.1:${CONFIG.port}`));
+retryQueued().catch(() => {}); // finish any reveal/sweep left from a previous run on startup
 setInterval(() => retryQueued().catch(() => {}), CONFIG.retryMs).unref?.();

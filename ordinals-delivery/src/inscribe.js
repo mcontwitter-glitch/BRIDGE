@@ -33,7 +33,8 @@ export function envelope(pubXonly, contentType, body, metadata) {
   return Buffer.concat(parts);
 }
 
-export async function inscribe({ key, recipient, contentType, body, metadata, onCommit, dryRun = false, rate: rateIn, btcUsd: usdIn }) {
+export async function inscribe({ key, recipient, contentType, body, metadata, onCommit, onBroadcast, dryRun = false, rate: rateIn, btcUsd: usdIn, deps = {} }) {
+  const bcast = deps.broadcast || broadcast, revealTries = deps.revealTries ?? 3;
   if (body.length > CONFIG.maxBodyBytes) throw new Error(`Body too large (${body.length} B)`);
   const recipientScript = assertTaprootRecipient(recipient);
   const pub = xonly(key.publicKey);
@@ -41,7 +42,7 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   const tree = { output: leaf };
   const redeem = { output: leaf, redeemVersion: 0xc0 };
   const commitPay = bitcoin.payments.p2tr({ internalPubkey: pub, scriptTree: tree, redeem, network: NETWORK });
-  const rate = rateIn ?? await feeRate();
+  const rate = rateIn ?? await (deps.feeRate || feeRate)();
   const btcUsd = usdIn ?? await fetchBtcUsd();
   const revealFee = Math.ceil(revealVsize(leaf.length) * rate) + 50;
   const commitValue = CONFIG.postageSats + revealFee;
@@ -49,7 +50,7 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   // Commit: spend the inscriber's key-path p2tr UTXOs.
   const fundAddr = fundingAddress(key);
   const fundScript = bitcoin.address.toOutputScript(fundAddr, NETWORK);
-  const list = (await utxos(fundAddr)).filter((u) => u.status?.confirmed).sort((a, b) => b.value - a.value);
+  const list = (await (deps.utxos || utxos)(fundAddr)).filter((u) => u.status?.confirmed).sort((a, b) => b.value - a.value);
   const psbt = new bitcoin.Psbt({ network: NETWORK });
   let inSum = 0;
   const commitFeeFor = (n) => Math.ceil(commitVsize(n) * rate) + 20;
@@ -61,7 +62,7 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   const commitFee = commitFeeFor(psbt.inputCount);
   // Hard USD cap on the exact fees about to be signed (throws queued:true → nothing signed or broadcast).
   const usd = assertUnderCap({ sats: commitValue + commitFee, rate, btcUsd });
-  if (inSum < commitValue + commitFee) throw Object.assign(new Error(`Inscriber wallet underfunded: need ${commitValue + commitFee} sats confirmed at ${fundAddr}, have ${inSum}`), { status: 503 });
+  if (inSum < commitValue + commitFee) throw Object.assign(new Error(`Inscriber wallet needs funding: need ${commitValue + commitFee} sats confirmed at ${fundAddr}, have ${inSum}`), { status: 503, queued: true, needsFunding: true, usd });
   if (dryRun) return { dryRun: true, feeRate: rate, btcUsd, usd, commitFee, revealFee, postage: CONFIG.postageSats, total: commitValue + commitFee, fundAddr, inSum };
   psbt.addOutput({ address: commitPay.address, value: commitValue });
   const change = inSum - commitValue - commitFee;
@@ -70,10 +71,9 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   psbt.signAllInputs(tweaked);
   psbt.finalizeAllInputs();
   const commitTx = psbt.extractTransaction();
-  const commitTxid = await broadcast(commitTx.toHex());
-  await onCommit?.(commitTxid);
+  const commitTxid = commitTx.getId();
 
-  // Reveal: script-path spend of the commit output, inscription lands on sat 0 of output 0 → recipient.
+  // Reveal is fully built + signed BEFORE the commit is broadcast (its input txid is known from the unsigned-safe commit).
   const reveal = new bitcoin.Psbt({ network: NETWORK });
   reveal.addInput({
     hash: commitTxid,
@@ -84,6 +84,43 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   reveal.addOutput({ script: recipientScript, value: CONFIG.postageSats });
   reveal.signInput(0, key);
   reveal.finalizeAllInputs();
-  const revealTxid = await broadcast(reveal.extractTransaction().toHex());
+  const revealTx = reveal.extractTransaction();
+  const revealHex = revealTx.toHex(), revealTxid = revealTx.getId();
+  // Persist everything needed to finish (or sweep) BEFORE any broadcast → a crash can never orphan the commit output.
+  await onCommit?.({ commitTxid, commitHex: commitTx.toHex(), revealTxid, revealHex, commitValue, leafHex: leaf.toString('hex') });
+  await bcast(commitTx.toHex());
+  await onBroadcast?.({ commitTxid });
+  try { await broadcastWithRetry(revealHex, { bcast, tries: revealTries }); }
+  catch (e) { throw Object.assign(new Error(`reveal broadcast failed after commit ${commitTxid}: ${e.message}`), { revealPending: true, commitTxid, revealTxid, revealHex }); }
   return { commitTxid, revealTxid, inscriptionId: `${revealTxid}i0`, feeRate: rate, costSats: commitValue + commitFee, costUsd: Math.round(usd * 100) / 100 };
+}
+
+const already = (m) => /already in block chain|txn-already-known|txn-already-in-mempool|Transaction already in/i.test(m);
+/** Broadcast; "already known/mined" counts as success. Retries transient errors with backoff. */
+export async function broadcastWithRetry(hex, { bcast = broadcast, tries = 3, waitMs = 1500 } = {}) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await bcast(hex); } catch (e) { if (already(e.message)) return null; last = e; if (i < tries - 1) await new Promise((r) => setTimeout(r, waitMs * (i + 1))); }
+  }
+  throw last;
+}
+
+/**
+ * Recovery: key-path sweep of a stuck commit output back to the inscriber wallet (used when the stored reveal can no
+ * longer be broadcast, e.g. it was rejected as invalid). The commit address = internal key + the inscription leaf.
+ */
+export function buildSweep({ key, commitTxid, commitValue, leafHex, rate }) {
+  const pub = xonly(key.publicKey);
+  const leaf = Buffer.from(leafHex, 'hex');
+  const commitPay = bitcoin.payments.p2tr({ internalPubkey: pub, scriptTree: { output: leaf }, network: NETWORK });
+  const fundAddr = fundingAddress(key);
+  const fee = Math.ceil(111 * rate) + 10;
+  if (commitValue - fee < 330) throw new Error(`commit output ${commitValue} sats too small to sweep at ${rate} sat/vB`);
+  const psbt = new bitcoin.Psbt({ network: NETWORK });
+  psbt.addInput({ hash: commitTxid, index: 0, witnessUtxo: { script: commitPay.output, value: commitValue }, tapInternalKey: pub, tapMerkleRoot: commitPay.hash });
+  psbt.addOutput({ address: fundAddr, value: commitValue - fee });
+  psbt.signInput(0, key.tweak(bitcoin.crypto.taggedHash('TapTweak', Buffer.concat([pub, commitPay.hash]))));
+  psbt.finalizeAllInputs();
+  const tx = psbt.extractTransaction();
+  return { hex: tx.toHex(), txid: tx.getId(), fee, to: fundAddr };
 }

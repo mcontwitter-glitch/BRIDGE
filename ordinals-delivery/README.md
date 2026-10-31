@@ -45,3 +45,11 @@ that mints a twin there (EVM recipient required). There is no Bitcoin/Ordinals e
 - **Hard cap**: the live cost (mempool.space fee rate × `/v1/prices` BTC/USD) is checked before signing. It must be under $20 and at most $18 (`ORDINALS_MARGIN_USD`),
   with an optional `ORDINALS_MAX_FEE_RATE`. Otherwise the delivery stays `queued` ("Waiting for lower Bitcoin fees") and is retried every `ORDINALS_RETRY_MS`.
 - `GET /api/ordinals/estimate` returns the USD cost per mode plus the setup cost. `npm run estimate [image]` prints the same.
+
+## Failure recovery
+
+- **Reveal failure**: the commit and reveal are both signed, and their hex is written to the delivery record (status `revealing`) *before* the commit is broadcast.
+  The retry loop (and server startup) re-broadcasts the stored commit, which is a no-op if already known, and then the reveal. After `ORDINALS_MAX_REVEAL_ATTEMPTS` (default 6) failures with a confirmed commit,
+  the commit output is swept back to the inscriber wallet by key path (`sweepTxid` recorded, status `sweeping` until it broadcasts), and the delivery is re-queued for a fresh inscription.
+  Nothing is dropped: every state keeps the signed hex needed to finish. `setup:collection --broadcast` resumes pending reveals the same way (`manifest.pending`).
+- **Underfunded wallet**: the delivery is `queued` with "Inscriber wallet needs funding" (nothing signed) and retried on the same 10-minute loop.
