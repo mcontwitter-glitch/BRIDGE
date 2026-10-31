@@ -1,0 +1,28 @@
+# Cloudflare Worker for Ordinals delivery. NOT deployed — see ../../GO_LIVE.md.
+name = "bridge-ordinals"
+main = "dist/index.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+no_bundle = true            # bundled by build/bundle.js (swaps fs-based modules for Worker shims)
+
+# Proposed route (zone bigfoot404.biz is visible to the account token). Uncomment at go-live.
+# routes = [{ pattern = "ordinals.bigfoot404.biz", custom_domain = true }]
+
+[triggers]
+crons = ["*/10 * * * *"]    # same 10-minute retry loop (queued / revealing / sweeping)
+
+[[durable_objects.bindings]]
+name = "DELIVERIES"
+class_name = "Deliveries"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Deliveries"]
+
+[vars]
+ORDINALS_NETWORK = "mainnet"
+ORDINALS_MODE = "recursive"
+ORDINALS_DATA_DIR = "/tmp"  # unused in the Worker (records live in the Durable Object)
+# ORDINALS_SINK_ADDRESS = "0x…"   # set after the sink deploy + setPeer(30110, sink); until then POST returns 503
+# Secret (never in this file): wrangler secret put ORDINALS_INSCRIBER_WIF

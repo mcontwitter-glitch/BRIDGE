@@ -25,10 +25,20 @@ contract DeployOrdinalsSink is Script {
     uint64 constant CONFIRMATIONS = 20;
 
     function run() external {
-        uint256 g0 = gasleft();
-        OrdinalsSink sink = new OrdinalsSink(ARB_ENDPOINT, ABSTRACT_EID, VAULT, VAULT_OWNER);
-        console2.log("SIMULATED sink (real address = CREATE of the deployer):", address(sink));
-        console2.log("deploy gas (execution, approx):", g0 - gasleft());
+        // After the real deploy: ORDINALS_SINK=0x… re-runs this against the live sink and prints final A1/A2/B2 calldata.
+        address live = vm.envOr("ORDINALS_SINK", address(0));
+        OrdinalsSink sink;
+        if (live != address(0)) {
+            require(live.code.length > 0, "ORDINALS_SINK has no code on this chain");
+            sink = OrdinalsSink(live);
+            require(sink.srcEid() == ABSTRACT_EID && sink.vaultPeer() == bytes32(uint256(uint160(VAULT))) && sink.endpoint() == ARB_ENDPOINT, "ORDINALS_SINK is not wired to the Abstract vault");
+            console2.log("LIVE sink:", live);
+        } else {
+            uint256 g0 = gasleft();
+            sink = new OrdinalsSink(ARB_ENDPOINT, ABSTRACT_EID, VAULT, VAULT_OWNER);
+            console2.log("SIMULATED sink (real address = CREATE of the deployer):", address(sink));
+            console2.log("deploy gas (execution, approx):", g0 - gasleft());
+        }
 
         // Simulate the delegate's receive config on the fork (proves the endpoint accepts it).
         bytes memory recvCfg = abi.encodeWithSelector(

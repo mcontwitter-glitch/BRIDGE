@@ -1,0 +1,13 @@
+{
+  "name": "bridge-ordinals-worker",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker port of ordinals-delivery (Durable Object store + 10-min cron). Collection setup stays a local CLI.",
+  "scripts": {
+    "gen": "node build/gen-collections.js",
+    "build": "npm run gen && node build/bundle.js",
+    "test": "npm run build && node --test test/",
+    "dry-run": "npm run build && wrangler deploy --dry-run --outdir dist-dry"
+  },
+  "devDependencies": { "esbuild": "^0.24.0", "wrangler": "^4.0.0" }
+}

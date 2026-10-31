@@ -53,3 +53,6 @@ that mints a twin there (EVM recipient required). There is no Bitcoin/Ordinals e
   the commit output is swept back to the inscriber wallet by key path (`sweepTxid` recorded, status `sweeping` until it broadcasts), and the delivery is re-queued for a fresh inscription.
   Nothing is dropped: every state keeps the signed hex needed to finish. `setup:collection --broadcast` resumes pending reveals the same way (`manifest.pending`).
 - **Underfunded wallet**: the delivery is `queued` with "Inscriber wallet needs funding" (nothing signed) and retried on the same 10-minute loop.
+
+## Cloudflare Worker
+`worker/` bundles this service for Cloudflare Workers. It uses a Durable Object store and a cron trigger every 10 minutes. Collection setup stays a local CLI. To build it, run `cd worker && npm test && npm run dry-run`. Go-live steps are in `../GO_LIVE.md`.

@@ -1,5 +1,4 @@
 // Ordinals delivery config. ORDINALS_NETWORK (default "mainnet") is the single switch; "signet" for tests.
-import os from 'node:os';
 import path from 'node:path';
 
 const network = process.env.ORDINALS_NETWORK || 'mainnet';
@@ -24,7 +23,7 @@ export const CONFIG = Object.freeze({
     maxFeeRate: Number(env('ORDINALS_MAX_FEE_RATE', 0)) || 0, // optional sat/vB ceiling (0 = off)
   },
   retryMs: Number(env('ORDINALS_RETRY_MS', 10 * 60_000)),
-  dataDir: env('ORDINALS_DATA_DIR', path.join(os.homedir(), '.bridge-ordinals')),
+  dataDir: env('ORDINALS_DATA_DIR', path.join(process.env.HOME || process.env.USERPROFILE || '.', '.bridge-ordinals')),
   port: Number(env('ORDINALS_PORT', 8790)),
   // ---- Abstract lock verification (keyless RPC reads) ----
   lock: {

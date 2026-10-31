@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-dry/
+.wrangler/
+.dev.vars
+src/collections.gen.js
