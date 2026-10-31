@@ -1,6 +1,8 @@
 // Commit/reveal Ordinal inscription (Taproot script path), reveal output paid to the recipient.
 import { bitcoin, NETWORK, xonly, fundingAddress, assertTaprootRecipient, feeRate, utxos, broadcast } from './btc.js';
 import { CONFIG } from './config.js';
+import { revealVsize, commitVsize, assertUnderCap } from './cost.js';
+import { btcUsd as fetchBtcUsd } from './btc.js';
 
 const OP = bitcoin.opcodes;
 function push(buf) {
@@ -31,7 +33,7 @@ export function envelope(pubXonly, contentType, body, metadata) {
   return Buffer.concat(parts);
 }
 
-export async function inscribe({ key, recipient, contentType, body, metadata, onCommit, dryRun = false }) {
+export async function inscribe({ key, recipient, contentType, body, metadata, onCommit, dryRun = false, rate: rateIn, btcUsd: usdIn }) {
   if (body.length > CONFIG.maxBodyBytes) throw new Error(`Body too large (${body.length} B)`);
   const recipientScript = assertTaprootRecipient(recipient);
   const pub = xonly(key.publicKey);
@@ -39,9 +41,9 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   const tree = { output: leaf };
   const redeem = { output: leaf, redeemVersion: 0xc0 };
   const commitPay = bitcoin.payments.p2tr({ internalPubkey: pub, scriptTree: tree, redeem, network: NETWORK });
-  const rate = await feeRate();
-  const revealVsize = Math.ceil((leaf.length + 64 + 33 + 10) / 4) + 110;
-  const revealFee = Math.ceil(revealVsize * rate) + 50;
+  const rate = rateIn ?? await feeRate();
+  const btcUsd = usdIn ?? await fetchBtcUsd();
+  const revealFee = Math.ceil(revealVsize(leaf.length) * rate) + 50;
   const commitValue = CONFIG.postageSats + revealFee;
 
   // Commit: spend the inscriber's key-path p2tr UTXOs.
@@ -50,15 +52,17 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   const list = (await utxos(fundAddr)).filter((u) => u.status?.confirmed).sort((a, b) => b.value - a.value);
   const psbt = new bitcoin.Psbt({ network: NETWORK });
   let inSum = 0;
-  const commitFeeFor = (n) => Math.ceil((n * 58 + 43 * 2 + 11) * rate) + 20;
+  const commitFeeFor = (n) => Math.ceil(commitVsize(n) * rate) + 20;
   for (const u of list) {
     psbt.addInput({ hash: u.txid, index: u.vout, witnessUtxo: { script: fundScript, value: u.value }, tapInternalKey: pub });
     inSum += u.value;
     if (inSum >= commitValue + commitFeeFor(psbt.inputCount) + 546) break;
   }
   const commitFee = commitFeeFor(psbt.inputCount);
+  // Hard USD cap on the exact fees about to be signed (throws queued:true → nothing signed or broadcast).
+  const usd = assertUnderCap({ sats: commitValue + commitFee, rate, btcUsd });
   if (inSum < commitValue + commitFee) throw Object.assign(new Error(`Inscriber wallet underfunded: need ${commitValue + commitFee} sats confirmed at ${fundAddr}, have ${inSum}`), { status: 503 });
-  if (dryRun) return { dryRun: true, feeRate: rate, commitFee, revealFee, postage: CONFIG.postageSats, total: commitValue + commitFee, fundAddr, inSum };
+  if (dryRun) return { dryRun: true, feeRate: rate, btcUsd, usd, commitFee, revealFee, postage: CONFIG.postageSats, total: commitValue + commitFee, fundAddr, inSum };
   psbt.addOutput({ address: commitPay.address, value: commitValue });
   const change = inSum - commitValue - commitFee;
   if (change >= 546) psbt.addOutput({ address: fundAddr, value: change });
@@ -81,5 +85,5 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   reveal.signInput(0, key);
   reveal.finalizeAllInputs();
   const revealTxid = await broadcast(reveal.extractTransaction().toHex());
-  return { commitTxid, revealTxid, inscriptionId: `${revealTxid}i0`, feeRate: rate };
+  return { commitTxid, revealTxid, inscriptionId: `${revealTxid}i0`, feeRate: rate, costSats: commitValue + commitFee, costUsd: Math.round(usd * 100) / 100 };
 }

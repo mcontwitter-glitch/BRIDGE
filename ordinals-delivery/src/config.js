@@ -12,8 +12,18 @@ export const CONFIG = Object.freeze({
   network,
   mempool: mainnet ? 'https://mempool.space/api' : 'https://mempool.space/signet/api',
   explorer: mainnet ? 'https://mempool.space' : 'https://mempool.space/signet',
-  postageSats: 10_000,
+  // Delivery mode: 'recursive' (default; tiny p5.js HTML referencing layers inscribed once), 'image' (fallback), 'metadata'.
+  mode: env('ORDINALS_MODE', 'recursive'),
+  postageSats: 546, // standard dust limit (P2TR dust is 330); value carried with the inscription
   maxBodyBytes: 60_000,
+  imageTargetBytes: Number(env('ORDINALS_IMAGE_TARGET_BYTES', 20_000)),
+  // Hard cost cap, checked before signing: cost must be < maxUsd AND ≤ marginUsd, else the delivery stays queued.
+  cost: {
+    maxUsd: 20,
+    marginUsd: Math.min(Number(env('ORDINALS_MARGIN_USD', 18)), 20),
+    maxFeeRate: Number(env('ORDINALS_MAX_FEE_RATE', 0)) || 0, // optional sat/vB ceiling (0 = off)
+  },
+  retryMs: Number(env('ORDINALS_RETRY_MS', 10 * 60_000)),
   dataDir: env('ORDINALS_DATA_DIR', path.join(os.homedir(), '.bridge-ordinals')),
   port: Number(env('ORDINALS_PORT', 8790)),
   // ---- Abstract lock verification (keyless RPC reads) ----
@@ -29,6 +39,8 @@ export const CONFIG = Object.freeze({
     skip: !mainnet && env('ORDINALS_SKIP_LOCK_CHECK', '') === '1', // signet test runs only; ignored on mainnet
   },
 });
+
+if (!['recursive', 'image', 'metadata'].includes(CONFIG.mode)) throw new Error('ORDINALS_MODE must be recursive, image or metadata');
 
 export function assertNetwork(net) {
   if (net !== CONFIG.network) throw Object.assign(new Error(`Only ${CONFIG.network} is supported by this service.`), { status: 400 });

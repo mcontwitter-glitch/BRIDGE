@@ -139,7 +139,8 @@
       (c.msg ? '<p class="addr-check addr-' + c.level + '">' + esc(c.msg) + "</p>" : "") +
       (ws.length ? '<button type="button" class="btn btn-ghost btn-sm" data-ord-wallet="' + ws[0] + '">Use connected BTC wallet (' + ws[0] + ")</button>" : "") +
       '<p class="hint">Only use a Taproot / Ordinals-capable wallet (Xverse, UniSat, Leather, OKX, Magic Eden). Your NFT is locked in the Abstract vault and inscribed as an Ordinal on Bitcoin.</p>' +
-      (state.delivery ? '<div class="ord-box"><div><span>Delivery</span> <code>' + esc(state.delivery.id) + "</code> · <b>" + esc(state.delivery.status) + "</b></div>" +
+      (state.est ? '<p class="hint ord-est">Est. Bitcoin inscription cost: <b>~$' + Number(state.est.usd).toFixed(2) + "</b> (" + esc(state.est.sats) + " sats at " + esc(state.est.feeRate) + " sat/vB, " + esc(state.est.mode) + " mode). " + (state.est.underCap ? "Under the $" + esc(state.est.marginUsd) + " limit." : "Above the $" + esc(state.est.marginUsd) + " limit right now: delivery would wait for lower Bitcoin fees.") + "</p>" : "") +
+      (state.delivery ? '<div class="ord-box"><div><span>Delivery</span> <code>' + esc(state.delivery.id) + "</code> · <b>" + esc(state.delivery.status === "queued" ? "Waiting for lower Bitcoin fees" : state.delivery.status) + "</b></div>" +
         (state.delivery.commitTxid ? '<div><span>commit</span> <a target="_blank" rel="noreferrer" href="' + ORDINALS.explorer + "/tx/" + esc(state.delivery.commitTxid) + '"><code>' + esc(state.delivery.commitTxid) + "</code></a></div>" : "") +
         (state.delivery.revealTxid ? '<div><span>reveal</span> <a target="_blank" rel="noreferrer" href="' + ORDINALS.explorer + "/tx/" + esc(state.delivery.revealTxid) + '"><code>' + esc(state.delivery.revealTxid) + "</code></a></div>" : "") + "</div>" : "");
     var inp = field.querySelector("input");
@@ -179,9 +180,22 @@
     document.body.classList.toggle("ord-mode", on);
     if (chip) chip.classList.toggle("ord-on", on);
     if (field) field.style.display = on ? "" : "none";
-    if (!on) setStatus("");
+    if (!on) setStatus(""); else loadEstimate();
     syncButton();
   }
+
+  /** Live USD estimate (GET /api/ordinals/estimate) for the active mode, shown BEFORE the user locks. */
+  async function loadEstimate() {
+    if (!ORDINALS.deliveryUrl) return null;
+    try {
+      var e = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/estimate").then(function (r) { return r.json(); });
+      var m = e[e.mode === "metadata" ? "metadataOnly" : e.mode] || e.image;
+      state.est = { usd: m.usd, sats: m.sats, underCap: m.underCap, feeRate: e.feeRate, mode: e.mode, marginUsd: e.marginUsd };
+      if (field) renderField();
+      return state.est;
+    } catch (x) { return null; }
+  }
+  window.bridgeOrdinalsEstimate = loadEstimate;
 
   /** Why Ordinals submit is blocked BEFORE any lock ('' = ready). */
   function gate() {
@@ -239,6 +253,9 @@
       // Service must be reachable BEFORE the NFT is locked.
       var hr = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/health").then(function (r) { return r.json(); }).catch(function () { return null; });
       if (!hr || !hr.ok || hr.network !== ORDINALS.network) throw new Error("Delivery service is not reachable right now. Nothing was locked.");
+      if (hr.mode === "recursive" && hr.setup && !Object.keys(hr.setup).some(function (k) { return hr.setup[k] === "inscribed"; })) throw new Error("Collection setup not inscribed on Bitcoin yet. Nothing was locked.");
+      var est = await loadEstimate();
+      if (est) setStatus("Est. Bitcoin cost ~$" + Number(est.usd).toFixed(2) + (est.underCap ? "" : " — above the limit now, your Ordinal will wait for lower Bitcoin fees") + ". Confirm the lock in your wallet…");
       var lockTx = await lockOnAbstract(nft);
       req = { dest: "ordinals", network: ORDINALS.network, recipient: state.addr.trim(), collection: nft.collection, tokenId: nft.tokenId,
         tokenURI: "", image: nft.image, name: nft.name, lockTxHash: lockTx, srcChainId: 2741 };
@@ -254,7 +271,7 @@
       }
       state.delivery = d; renderField();
       for (var i = 0; i < 360 && d.status !== "delivered" && d.status !== "failed"; i++) {
-        setStatus("Ordinal delivery " + d.status + "…");
+        setStatus(d.status === "queued" ? (d.waiting || "Waiting for lower Bitcoin fees") + (d.estUsd != null ? " (now ~$" + d.estUsd + ")" : "") + ". Your NFT is safely locked; we retry automatically." : "Ordinal delivery " + d.status + "…");
         await new Promise(function (res) { setTimeout(res, 10000); });
         d = await (await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/" + encodeURIComponent(d.id))).json();
         state.delivery = d; renderField();

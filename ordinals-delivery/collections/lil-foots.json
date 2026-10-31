@@ -1,0 +1,171 @@
+{
+ "slug": "lil-foots",
+ "name": "LIL FOOT #",
+ "collection": "0x22fc5bb9810ef92db35accea463693331bcd0a8a",
+ "_note": "Trait layer source: Lil' Foots art (8334x8334 RGBA PNGs, one per trait value). Folder 'Left Hand' holds the metadata 'Right hand' values and vice versa. Draw order verified by compositing vs the live IPFS images (tokens 1,2,3,96,199,273,278,300,410).",
+ "types": [
+  "Background",
+  "Cloths",
+  "Drip",
+  "Eyes",
+  "Flex",
+  "Fur type",
+  "Head",
+  "Left hand",
+  "Mouth",
+  "Right hand"
+ ],
+ "vals": [
+  [
+   "Cloud",
+   "Blood",
+   "Teal",
+   "Abstract",
+   "Lavender",
+   "Tan",
+   "Green",
+   "Flower",
+   "Grey",
+   "Pink",
+   "Wata",
+   "Bubblegum",
+   "Patriot",
+   "Gold",
+   "Sunrise"
+  ],
+  [
+   "None",
+   "Diaper",
+   "Overalls"
+  ],
+  [
+   "None",
+   "Diamonds",
+   "Rolex"
+  ],
+  [
+   "High AF RN",
+   "Fancy",
+   "Pink Maxi",
+   "XP Maxi",
+   "Beady",
+   "Icy",
+   "_Merica",
+   "Bloodshot",
+   "Pitted",
+   "Voltage",
+   "XP Boost",
+   "Snowboard",
+   "Night Vision",
+   "Demon Time"
+  ],
+  [
+   "None",
+   "Bigness",
+   "Gold Cuban",
+   "Big Lost",
+   "BibFoot",
+   "Platinum Cuban",
+   "Abstract Bib"
+  ],
+  [
+   "Snow Leopard",
+   "Cold",
+   "Expelled",
+   "Suspended",
+   "Lava",
+   "Frozen",
+   "Pink",
+   "Yowie",
+   "Chosen",
+   "Black",
+   "Badged Up",
+   "Bambino",
+   "Yeti",
+   "Skunk Ape"
+  ],
+  [
+   "HALO",
+   "Top Hat",
+   "Pink Beanie",
+   "Green Beanie",
+   "Tradesman",
+   "None",
+   "ABS Bucket",
+   "BigCap",
+   "Elite Chad",
+   "Pink Bow",
+   "Healer",
+   "Orange Beanie",
+   "Abstract Snapback",
+   "Orange Bow",
+   "Blue Bow",
+   "EBK",
+   "Cowboy",
+   "White Mage",
+   "Royalty",
+   "Outlaw",
+   "GD",
+   "White Bucket",
+   "Princess",
+   "Larry Fish",
+   "Vagos",
+   "Cowgirl"
+  ],
+  [
+   "None",
+   "Polly",
+   "Duckie",
+   "Pengu",
+   "Retsba",
+   "Abster",
+   "Dark Pengu"
+  ],
+  [
+   "Frown",
+   "Smile",
+   "Toof",
+   "Labubu",
+   "Pink Pacifier",
+   "Abstractifier",
+   "Blue Pacifier"
+  ],
+  [
+   "None",
+   "Twuck",
+   "Tractor",
+   "Super Soaker",
+   "Slingshot",
+   "Bigtendo666",
+   "GameBig"
+  ]
+ ],
+ "dirs": {
+  "Background": "Background",
+  "Cloths": "Clothes",
+  "Drip": "Accessories",
+  "Eyes": "Eyes",
+  "Flex": "Flex",
+  "Fur type": "Fur Types",
+  "Head": "Head",
+  "Left hand": "Right Hand",
+  "Mouth": "Mouth",
+  "Right hand": "Left Hand"
+ },
+ "fileFix": {
+  "_Merica": "'Merica"
+ },
+ "drawOrder": [
+  "Background",
+  "Fur type",
+  "Cloths",
+  "Mouth",
+  "Eyes",
+  "Head",
+  "Drip",
+  "Flex",
+  "Left hand",
+  "Right hand"
+ ],
+ "none": "None"
+}

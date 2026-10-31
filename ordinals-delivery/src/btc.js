@@ -34,6 +34,7 @@ export function assertTaprootRecipient(addr) {
 const api = (p) => `${CONFIG.mempool}${p}`;
 async function getJ(p) { const r = await fetch(api(p)); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.json(); }
 export const feeRate = async () => Math.max(1, (await getJ('/v1/fees/recommended')).halfHourFee || 1);
+export const btcUsd = async () => Number((await getJ('/v1/prices')).USD) || 0;
 export const utxos = (a) => getJ(`/address/${a}/utxo`);
 export const txStatus = (txid) => getJ(`/tx/${txid}/status`);
 export async function broadcast(hex) {

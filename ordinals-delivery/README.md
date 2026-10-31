@@ -32,3 +32,16 @@ that mints a twin there (EVM recipient required). There is no Bitcoin/Ordinals e
 (a) add an Ordinals lock path to the vault (upgrade: lock without LZ send, emit an event with the bc1p recipient), or
 (b) wire a dedicated "Ordinals" peer eid whose receiver mints nothing. Then set `ORDINALS_LOCK_DEST_EID` /
 `BRIDGE_ORDINALS_LOCK_EID` and adjust `src/lock.js` if the event changes.
+
+## Cost cap and delivery modes (Phase 3/4)
+
+- **Modes** (`ORDINALS_MODE`): `recursive` (default), `image` (fallback: NFT image shrunk to WebP/AVIF/palette PNG ≤ 20 KB), `metadata` (compact JSON).
+- **Recursive (p5.js)**: each item is a < 600 B `text/html;charset=utf-8` inscription that loads the canonical p5.js v1.11.2
+  inscription (`13a5c8e41dfc110514b450b2f15317988c0aaf276d3dbdcca9aa3c7d0b2188a7i0`, reused, never re-inscribed) and a shared
+  renderer by `/content/<id>`, then draws the LIL FOOTS trait layers in order. tokenId + trait indices are in the HTML; the trait names are in the CBOR metadata.
+- **One-time setup**: `npm run setup:collection` (DRY RUN: builds 97 deduped 480 px WebP layers from the original trait PNGs and prints the cost).
+  `-- --broadcast` inscribes the layers + renderer (resumable) and writes `collections/lil-foots.manifest.json`. Until that manifest exists, the service answers
+  **503 "collection setup not inscribed"** and inscribes nothing, and the page refuses before any lock.
+- **Hard cap**: the live cost (mempool.space fee rate × `/v1/prices` BTC/USD) is checked before signing. It must be under $20 and at most $18 (`ORDINALS_MARGIN_USD`),
+  with an optional `ORDINALS_MAX_FEE_RATE`. Otherwise the delivery stays `queued` ("Waiting for lower Bitcoin fees") and is retried every `ORDINALS_RETRY_MS`.
+- `GET /api/ordinals/estimate` returns the USD cost per mode plus the setup cost. `npm run estimate [image]` prints the same.

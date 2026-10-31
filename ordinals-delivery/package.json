@@ -9,13 +9,15 @@
     "start": "node src/server.js",
     "deliver": "node src/cli.js",
     "test": "node --test test/",
-    "estimate": "node src/estimate.js"
+    "estimate": "node src/estimate.js",
+    "setup:collection": "node src/setup-collection.js"
   },
   "dependencies": {
     "@bitcoinerlab/secp256k1": "^1.1.1",
     "@noble/hashes": "^1.8.0",
     "bitcoinjs-lib": "^6.1.7",
-    "ecpair": "^2.1.0"
+    "ecpair": "^2.1.0",
+    "sharp": "^0.33.5"
   },
   "engines": {
     "node": ">=18"

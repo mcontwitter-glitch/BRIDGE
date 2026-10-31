@@ -27,3 +27,14 @@ test('front end: no delivery service → submit blocked before any lock', () => 
   assert.strictEqual(load({ BRIDGE_ORDINALS_URL: 'https://x' }).bridgeOrdinalsGate(), 'Ordinals lock path not live yet');
   assert.strictEqual(load({ BRIDGE_ORDINALS_URL: 'https://x', BRIDGE_ORDINALS_LOCK_EID: 40999 }).bridgeOrdinalsGate(), '');
 });
+test('front end: USD estimate for the active mode is read before locking', async () => {
+  const w = load({ BRIDGE_ORDINALS_URL: 'https://x' });
+  const est = { mode: 'recursive', feeRate: 1, marginUsd: 18, recursive: { usd: 0.85, sats: 1098, underCap: true }, image: { usd: 4.6, sats: 5990, underCap: true } };
+  const ctxFetch = async (u) => { assert.strictEqual(u, 'https://x/api/ordinals/estimate'); return { json: async () => est }; };
+  globalThis.fetch = ctxFetch;
+  const w2 = (() => { const src2 = src; const window = { BRIDGE_ORDINALS_URL: 'https://x' }; const el = () => ({ classList: { toggle() {} }, style: {}, appendChild() {}, setAttribute() {} });
+    vm.runInNewContext(src2, { window, document: { addEventListener() {}, documentElement: {}, querySelectorAll: () => [], querySelector: () => null, createElement: el, head: el(), body: el() }, MutationObserver: class { observe() {} }, console, setTimeout, fetch: ctxFetch }); return window; })();
+  const e = await w2.bridgeOrdinalsEstimate();
+  assert.deepStrictEqual({ ...e }, { usd: 0.85, sats: 1098, underCap: true, feeRate: 1, mode: 'recursive', marginUsd: 18 });
+  assert.strictEqual(await w.bridgeOrdinalsEstimate(), null); // no fetch in that sandbox → null, never throws
+});
