@@ -11,3 +11,7 @@ relay-signer
 worker/sign-relay/node_modules/
 worker/sign-relay/.wrangler/
 worker/sign-relay/.dev.vars
+
+ordinals-delivery/node_modules/
+.bridge-ordinals/
+*.key
