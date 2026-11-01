@@ -14,7 +14,7 @@ const cap = { maxUsd: 20, marginUsd: 18, maxFeeRate: 0 };
 const usdSats = (usd, px = 100000) => Math.round(usd * 1e8 / px);
 
 test('cap: strictly under $20, ≤ $18 margin, fee ceiling, price unknown → queued', () => {
-  assert.strictEqual(CONFIG.postageSats, 546);
+  assert.strictEqual(CONFIG.postageSats, 330);
   assert.ok(assertUnderCap({ sats: usdSats(17.99), rate: 5, btcUsd: 100000 }, cap) < 18);
   assert.doesNotThrow(() => assertUnderCap({ sats: usdSats(18), rate: 5, btcUsd: 100000 }, cap));
   assert.throws(() => assertUnderCap({ sats: usdSats(18.01), rate: 5, btcUsd: 100000 }, cap), (e) => e.queued && e.status === 202 && /above the \$18 margin/.test(e.message));
@@ -24,7 +24,7 @@ test('cap: strictly under $20, ≤ $18 margin, fee ceiling, price unknown → qu
 });
 test('cost model + break-even rate', () => {
   const s = costSats({ bodyBytes: 400, metaBytes: 330, typeLen: 24, rate: 1 });
-  assert.strictEqual(s.total, s.revealFee + s.commitFee + 546);
+  assert.strictEqual(s.total, s.revealFee + s.commitFee + 330);
   const r = breakEvenRate({ bodyBytes: 400, metaBytes: 330, typeLen: 24 }, 77000, 18);
   assert.ok(costSats({ bodyBytes: 400, metaBytes: 330, typeLen: 24, rate: r }).total * 77000 / 1e8 <= 18);
   assert.ok(costSats({ bodyBytes: 400, metaBytes: 330, typeLen: 24, rate: r + 1 }).total * 77000 / 1e8 > 18);
@@ -45,7 +45,7 @@ test('recursive is the default mode; item HTML < 600 B, text/html;charset=utf-8,
   assert.strictEqual(R.HTML_TYPE, 'text/html;charset=utf-8');
   assert.throws(() => R.traitIndices(lf, [{ trait_type: 'Eyes', value: 'Nope' }]), /unknown trait/);
   const js = R.buildRenderer(lf, { 'Head/GD': 'a'.repeat(64) + 'i0' });
-  assert.match(js, /^var L=\[/); assert.ok(js.includes('a'.repeat(64) + 'i0'));
+  assert.match(js, /^var T=\["a{64}"\],L=\[/); assert.ok(js.includes("'i'+i%1e4"));
 });
 
 test('no manifest → "collection setup not inscribed", nothing inscribed', async () => {
@@ -71,4 +71,15 @@ test('over the cap → delivery stays queued, then inscribes when fees drop', as
   await D.retryQueued(deps); assert.strictEqual(store.get(rec.id).status, 'queued');
   high = false; await D.retryQueued(deps);
   r = store.get(rec.id); assert.strictEqual(r.status, 'inscribed'); assert.strictEqual(r.inscriptionId, 'ri0'); assert.strictEqual(calls, 3);
+});
+
+test('batched setup: one reveal under the vsize limit, auto-split above it', async () => {
+  const { batchCostSats, planBatches } = await import('../src/cost.js');
+  const items = Array.from({ length: 97 }, () => ({ bodyBytes: 2400, typeLen: 10 }));
+  const one = batchCostSats({ items, rate: 1 });
+  assert.strictEqual(one.reveals.length, 1);
+  assert.ok(one.total < items.reduce((s, it) => s + costSats({ bodyBytes: it.bodyBytes, metaBytes: 0, rate: 1 }).total, 0) / 2);
+  const g = planBatches(items, 40_000);
+  assert.strictEqual(g.length, 2); assert.deepStrictEqual(g.flat(), items.map((_, i) => i));
+  assert.ok(batchCostSats({ items, rate: 0.2 }).total < one.total / 4);
 });

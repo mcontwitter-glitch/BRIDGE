@@ -64,8 +64,8 @@ The custom domain needs a token allowed to edit DNS / Workers custom domains on 
 
 ## 6. Collection setup (layers + renderer, inscribed once)
 - **Who approves:** BIG funds the inscriber and approves the spend.
-- **Cost:** 98 inscriptions, 419,572 B ≈ 195,907 sats ≈ **$151 at 1 sat/vB**. The cost grows linearly with the fee rate.
-- **Funding:** send about **250,000 sats** to `bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9`. That covers setup plus a buffer for deliveries (about 1,110 sats ≈ $0.86 each at 1 sat/vB).
+- **Cost:** 98 inscriptions (97 AVIF layers batched into 1 commit + 1 reveal on one sat, plus a 775 B compact renderer), 230,596 B ≈ 59,922 sats ≈ **$47 at 1 sat/vB** (~12,500 sats at 0.2 sat/vB with `ORDINALS_FEE_RATE=0.2` or `ORDINALS_MIN_FEE_RATE=0.1`). The cost grows linearly with the fee rate (+~59,100 sats per +1 sat/vB).
+- **Funding:** send about **70,000 sats** to `bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9`. That covers setup at 1 sat/vB plus ~10,000 sats left for deliveries (about 870 sats ≈ $0.68 each at 1 sat/vB with 330-sat postage).
 ```bash
 cd /workspace/BRIDGE/ordinals-delivery
 npm run setup:collection                 # dry run: plan + cost
@@ -95,7 +95,7 @@ Commit as mcontwitter-glitch with no trailers. Push only after BIG says "Push"; 
 
 ## Totals and order of approvals
 - **EVM:** about $0.15 total. That needs about 0.0005 ETH on Arbitrum for `0xb19F…96b1` (it has 0), and Abstract is already funded.
-- **BTC:** about $151 at 1 sat/vB, plus about $0.86 per delivery.
+- **BTC:** about $47 at 1 sat/vB, plus about $0.68 per delivery.
 - **Cloudflare:** $0–5/mo.
 - **BIG signs:** deploy, A1, A2, B1 and B2 (five EVM transactions), plus the BTC funding transfer. **BIG approves:** the Worker deploy (with the WIF secret), the collection-setup spend, and the final push.
 - **Return path (Ordinal → EVM):** not supported. A foot sent to Ordinals stays locked in the vault (see `ordinals-delivery/ORDINALS_SINK.md`).

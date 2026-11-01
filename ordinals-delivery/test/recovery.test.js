@@ -10,6 +10,7 @@ const { ECPair, bitcoin, xonly, fundingAddress, NETWORK } = await import('../src
 const { inscribe, buildSweep, broadcastWithRetry } = await import('../src/inscribe.js');
 const D = await import('../src/deliver.js');
 const store = await import('../src/store.js');
+const { CONFIG } = await import('../src/config.js');
 
 const key = ECPair.makeRandom({ network: NETWORK });
 const recipient = bitcoin.payments.p2tr({ internalPubkey: xonly(ECPair.makeRandom().publicKey), network: NETWORK }).address;
@@ -21,7 +22,7 @@ function chain({ revealFails = 0, invalidReveal = false } = {}) {
   const seen = []; let fails = revealFails;
   const bc = async (hex) => {
     const tx = bitcoin.Transaction.fromHex(hex);
-    if (Buffer.from(tx.ins[0].hash).reverse().toString('hex') !== 'aa'.repeat(32) && tx.outs.length === 1 && tx.outs[0].value === 546) {
+    if (Buffer.from(tx.ins[0].hash).reverse().toString('hex') !== 'aa'.repeat(32) && tx.outs.length === 1 && tx.outs[0].value === CONFIG.postageSats) {
       if (invalidReveal) throw new Error('broadcast failed: mandatory-script-verify-flag-failed');
       if (fails-- > 0) throw new Error('broadcast failed: 503 upstream timeout');
     }

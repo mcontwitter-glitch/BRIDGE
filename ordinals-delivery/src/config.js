@@ -2,18 +2,25 @@
 import path from 'node:path';
 
 const network = process.env.ORDINALS_NETWORK || 'mainnet';
-if (!['mainnet', 'signet'].includes(network)) throw new Error('ORDINALS_NETWORK must be mainnet or signet');
+if (!['mainnet', 'signet', 'regtest'].includes(network)) throw new Error('ORDINALS_NETWORK must be mainnet, signet or regtest');
 const mainnet = network === 'mainnet';
 const env = (k, d) => (process.env[k] === undefined || process.env[k] === '' ? d : process.env[k]);
 
 export const CONFIG = Object.freeze({
   mainnet, // approved by BIG on 2026-10-31 ("Wire it for main net")
   network,
-  mempool: mainnet ? 'https://mempool.space/api' : 'https://mempool.space/signet/api',
+  mempool: mainnet ? 'https://mempool.space/api' : network === 'signet' ? 'https://mempool.space/signet/api' : env('ORDINALS_REGTEST_API', 'http://127.0.0.1:0'),
   explorer: mainnet ? 'https://mempool.space' : 'https://mempool.space/signet',
   // Delivery mode: 'recursive' (default; tiny p5.js HTML referencing layers inscribed once), 'image' (fallback), 'metadata'.
   mode: env('ORDINALS_MODE', 'recursive'),
-  postageSats: 546, // standard dust limit (P2TR dust is 330); value carried with the inscription
+  // Value carried with each inscription. 330 = P2TR dust limit (every recipient is asserted to be Taproot). Override: ORDINALS_POSTAGE_SATS.
+  postageSats: Math.max(330, Number(env('ORDINALS_POSTAGE_SATS', 330))),
+  // Fee rate (sat/vB, fractional allowed). ORDINALS_FEE_RATE pins it; otherwise the mempool.space rate is floored at
+  // ORDINALS_MIN_FEE_RATE (default 1 = previous behaviour; never below 0.1, the Bitcoin Core ≥29 min relay fee).
+  fixedFeeRate: Number(env('ORDINALS_FEE_RATE', 0)) > 0 ? Math.max(0.1, Number(process.env.ORDINALS_FEE_RATE)) : 0,
+  minFeeRate: Math.max(0.1, Number(env('ORDINALS_MIN_FEE_RATE', 1)) || 1),
+  // Batched setup: max vsize of one reveal tx (standard limit is 100,000 vB); larger batches split into more reveals.
+  maxRevealVsize: Number(env('ORDINALS_MAX_REVEAL_VSIZE', 98_000)),
   maxBodyBytes: 60_000,
   imageTargetBytes: Number(env('ORDINALS_IMAGE_TARGET_BYTES', 20_000)),
   // Hard cost cap, checked before signing: cost must be < maxUsd AND ≤ marginUsd, else the delivery stays queued.

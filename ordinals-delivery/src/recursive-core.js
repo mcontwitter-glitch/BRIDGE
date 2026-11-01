@@ -22,11 +22,16 @@ export function traitIndices(c, attrs) {
   });
 }
 
-/** Shared renderer (inscribed once, text/javascript): L[type][valueIndex] = layer inscription id ('' = none). */
+/**
+ * Shared renderer (inscribed once, text/javascript). Compact: each layer id <txid>i<n> is stored as g*10000+n with
+ * T[g] = txid (a batched setup has 1–2 distinct txids), -1 = none. go(tokenId, valueIdx[]) draws in drawOrder.
+ */
 export function buildRenderer(c, ids) {
-  const L = c.types.map((t, k) => c.vals[k].map((v) => (v === c.none ? '' : ids[layerKey(t, v)] || '')));
+  const T = [];
+  const enc = (id) => { const m = /^([0-9a-f]{64})i(\d+)$/.exec(id || ''); if (!m) return -1; let g = T.indexOf(m[1]); if (g < 0) g = T.push(m[1]) - 1; if (+m[2] >= 1e4) throw new Error('index ≥ 10000'); return g * 1e4 + +m[2]; };
+  const L = c.types.map((t, k) => c.vals[k].map((v) => (v === c.none ? -1 : enc(ids[layerKey(t, v)]))));
   const D = c.drawOrder.map((t) => c.types.indexOf(t));
-  return `var L=${JSON.stringify(L)},D=${JSON.stringify(D)};function go(t,v){new p5(function(p){var m=[];p.preload=function(){D.forEach(function(k){var i=L[k][v[k]];i&&m.push(p.loadImage('/content/'+i))})};p.setup=function(){var s=Math.min(innerWidth,innerHeight);p.createCanvas(s,s);p.pixelDensity(1);p.noLoop()};p.draw=function(){m.forEach(function(i){p.image(i,0,0,p.width,p.height)})}})}`;
+  return `var T=${JSON.stringify(T)},L=${JSON.stringify(L)},D=${JSON.stringify(D)};function go(t,v){new p5(function(p){var m=[];p.preload=function(){D.forEach(function(k){var i=L[k][v[k]];i>=0&&m.push(p.loadImage('/content/'+T[i/1e4|0]+'i'+i%1e4))})};p.setup=function(){var s=Math.min(innerWidth,innerHeight);p.createCanvas(s,s);p.pixelDensity(1);p.noLoop()};p.draw=function(){m.forEach(function(i){p.image(i,0,0,p.width,p.height)})}})}`;
 }
 
 /** Per-item HTML (< 600 B): loads p5 + renderer by /content/<id>, embeds tokenId and the trait indices. */

@@ -1,10 +1,11 @@
 // Commit/reveal Ordinal inscription (Taproot script path), reveal output paid to the recipient.
 import { bitcoin, NETWORK, xonly, fundingAddress, assertTaprootRecipient, feeRate, utxos, broadcast } from './btc.js';
 import { CONFIG } from './config.js';
-import { revealVsize, commitVsize, assertUnderCap } from './cost.js';
+import { revealVsize, commitVsize, assertUnderCap, planBatches, batchRevealVsize } from './cost.js';
 import { btcUsd as fetchBtcUsd } from './btc.js';
 
 const OP = bitcoin.opcodes;
+export const SAFE_MIN_FUNDING = 1000; // UTXOs at or below this are treated as inscription carriers, never spent as fees
 function push(buf) {
   const n = buf.length;
   if (n < 0x4c) return Buffer.concat([Buffer.from([n]), buf]);
@@ -25,7 +26,11 @@ export function cbor(v) {
 
 /** <xonly> OP_CHECKSIG OP_FALSE OP_IF "ord" 01 <type> [05 <cbor>]* 00 <body>* OP_ENDIF */
 export function envelope(pubXonly, contentType, body, metadata) {
-  const parts = [push(pubXonly), Buffer.from([OP.OP_CHECKSIG, OP.OP_0, OP.OP_IF]), push(Buffer.from('ord')), push(Buffer.from([1])), push(Buffer.from(contentType))];
+  return Buffer.concat([push(pubXonly), Buffer.from([OP.OP_CHECKSIG]), envelopeOnly(contentType, body, metadata)]);
+}
+/** OP_FALSE OP_IF "ord" 01 <type> [05 <cbor>]* 00 <body>* OP_ENDIF (no key/checksig prefix). */
+export function envelopeOnly(contentType, body, metadata) {
+  const parts = [Buffer.from([OP.OP_0, OP.OP_IF]), push(Buffer.from('ord')), push(Buffer.from([1])), push(Buffer.from(contentType))];
   if (metadata) for (const c of chunks(cbor(metadata))) parts.push(push(Buffer.from([5])), push(c));
   parts.push(Buffer.from([OP.OP_0]));
   for (const c of chunks(body)) parts.push(push(c));
@@ -50,7 +55,8 @@ export async function inscribe({ key, recipient, contentType, body, metadata, on
   // Commit: spend the inscriber's key-path p2tr UTXOs.
   const fundAddr = fundingAddress(key);
   const fundScript = bitcoin.address.toOutputScript(fundAddr, NETWORK);
-  const list = (await (deps.utxos || utxos)(fundAddr)).filter((u) => u.status?.confirmed).sort((a, b) => b.value - a.value);
+  // Never fund with postage-sized outputs (they may carry inscriptions, e.g. the collection layers sent to self).
+  const list = (deps.utxoList || (await (deps.utxos || utxos)(fundAddr)).filter((u) => u.status?.confirmed)).filter((u) => u.value > SAFE_MIN_FUNDING).sort((a, b) => b.value - a.value);
   const psbt = new bitcoin.Psbt({ network: NETWORK });
   let inSum = 0;
   const commitFeeFor = (n) => Math.ceil(commitVsize(n) * rate) + 20;
@@ -123,4 +129,71 @@ export function buildSweep({ key, commitTxid, commitValue, leafHex, rate }) {
   psbt.finalizeAllInputs();
   const tx = psbt.extractTransaction();
   return { hex: tx.toHex(), txid: tx.getId(), fee, to: fundAddr };
+}
+
+/**
+ * Batched setup inscription (ord-style): ONE commit with one output per group, then one reveal per group whose single
+ * tapscript leaf is <xonly> OP_CHECKSIG + N envelopes. No pointers → all N inscriptions sit on the first sat of the
+ * reveal's single postage output; ids are <revealTxid>i0..i(N-1) in envelope order. Groups are split so each reveal
+ * stays ≤ maxVsize (standard limit 100k vB). Everything is signed and handed to onCommit BEFORE any broadcast.
+ * items: [{ contentType, body }]. Returns { commitTxid, reveals:[{txid,hex,vsize,ids}], ids (item order), change }.
+ */
+export async function inscribeBatch({ key, recipient, items, onCommit, rate: rateIn, btcUsd: usdIn, maxUsd, maxVsize = CONFIG.maxRevealVsize, dryRun = false, deps = {} }) {
+  const bcast = deps.broadcast || broadcast;
+  const recipientScript = assertTaprootRecipient(recipient);
+  const pub = xonly(key.publicKey);
+  const rate = rateIn ?? await (deps.feeRate || feeRate)();
+  const btcUsd = usdIn ?? await fetchBtcUsd();
+  const env = items.map((it) => envelopeOnly(it.contentType, it.body, it.metadata));
+  const groups = planBatches(items.map((it) => ({ bodyBytes: it.body.length, typeLen: it.contentType.length })), maxVsize);
+  const G = groups.map((idxs) => {
+    const leaf = Buffer.concat([push(pub), Buffer.from([OP.OP_CHECKSIG]), ...idxs.map((i) => env[i])]);
+    const pay = bitcoin.payments.p2tr({ internalPubkey: pub, scriptTree: { output: leaf }, redeem: { output: leaf, redeemVersion: 0xc0 }, network: NETWORK });
+    const revealFee = Math.ceil(batchRevealVsize(leaf.length) * rate) + 50;
+    return { idxs, leaf, pay, value: CONFIG.postageSats + revealFee, revealFee };
+  });
+  const need = G.reduce((s, g) => s + g.value, 0);
+  const fundAddr = fundingAddress(key);
+  const fundScript = bitcoin.address.toOutputScript(fundAddr, NETWORK);
+  const list = (deps.utxoList || (await (deps.utxos || utxos)(fundAddr)).filter((u) => u.status?.confirmed)).filter((u) => u.value > SAFE_MIN_FUNDING).sort((a, b) => b.value - a.value);
+  const commitFeeFor = (n) => Math.ceil(commitVsize(n, G.length + 1) * rate) + 20;
+  const psbt = new bitcoin.Psbt({ network: NETWORK });
+  let inSum = 0;
+  for (const u of list) {
+    psbt.addInput({ hash: u.txid, index: u.vout, witnessUtxo: { script: fundScript, value: u.value }, tapInternalKey: pub });
+    inSum += u.value;
+    if (inSum >= need + commitFeeFor(psbt.inputCount) + 546) break;
+  }
+  const commitFee = commitFeeFor(Math.max(1, psbt.inputCount));
+  const total = need + commitFee;
+  const usd = maxUsd ? assertUnderCap({ sats: total, rate, btcUsd }, { maxUsd: maxUsd + 0.01, marginUsd: maxUsd, maxFeeRate: CONFIG.cost.maxFeeRate }) : total * btcUsd / 1e8;
+  const plan = { feeRate: rate, groups: G.map((g) => g.idxs.length), commitFee, revealFees: G.map((g) => g.revealFee), postage: CONFIG.postageSats, total, usd, fundAddr, inSum };
+  if (inSum < total) throw Object.assign(new Error(`Inscriber wallet needs funding: need ${total} sats confirmed at ${fundAddr}, have ${inSum}`), { status: 503, needsFunding: true, plan });
+  if (dryRun) return { dryRun: true, ...plan };
+  for (const g of G) psbt.addOutput({ address: g.pay.address, value: g.value });
+  const change = inSum - total;
+  if (change >= 546) psbt.addOutput({ address: fundAddr, value: change });
+  psbt.signAllInputs(key.tweak(bitcoin.crypto.taggedHash('TapTweak', pub)));
+  psbt.finalizeAllInputs();
+  const commitTx = psbt.extractTransaction();
+  const commitTxid = commitTx.getId();
+  const reveals = G.map((g, k) => {
+    const r = new bitcoin.Psbt({ network: NETWORK });
+    r.addInput({ hash: commitTxid, index: k, witnessUtxo: { script: g.pay.output, value: g.value },
+      tapLeafScript: [{ leafVersion: 0xc0, script: g.leaf, controlBlock: g.pay.witness[g.pay.witness.length - 1] }] });
+    r.addOutput({ script: recipientScript, value: CONFIG.postageSats });
+    r.signInput(0, key);
+    r.finalizeAllInputs();
+    const tx = r.extractTransaction();
+    if (tx.virtualSize() > 100_000) throw new Error(`reveal ${k} is ${tx.virtualSize()} vB (> 100k standard limit)`);
+    const txid = tx.getId();
+    return { txid, hex: tx.toHex(), vsize: tx.virtualSize(), ids: g.idxs.map((_, j) => `${txid}i${j}`), idxs: g.idxs };
+  });
+  const ids = []; for (const r of reveals) r.idxs.forEach((i, j) => { ids[i] = r.ids[j]; });
+  const res = { commitTxid, commitHex: commitTx.toHex(), reveals: reveals.map(({ idxs, ...r }) => r), ids,
+    change: change >= 546 ? { txid: commitTxid, vout: G.length, value: change, status: { confirmed: false } } : null, ...plan };
+  await onCommit?.(res);
+  await bcast(res.commitHex);
+  for (const r of res.reveals) await broadcastWithRetry(r.hex, { bcast, tries: deps.revealTries ?? 3 });
+  return res;
 }

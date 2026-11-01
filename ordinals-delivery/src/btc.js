@@ -9,7 +9,7 @@ bitcoin.initEccLib(ecc);
 export const ECPair = ECPairFactory(ecc);
 export { bitcoin };
 // Signet uses the testnet address params (tb1…).
-export const NETWORK = CONFIG.mainnet ? bitcoin.networks.bitcoin : bitcoin.networks.testnet;
+export const NETWORK = CONFIG.mainnet ? bitcoin.networks.bitcoin : CONFIG.network === 'regtest' ? bitcoin.networks.regtest : bitcoin.networks.testnet;
 export const keyFile = () => process.env.ORDINALS_INSCRIBER_KEY_FILE || path.join(CONFIG.dataDir, `${CONFIG.network}.key`);
 
 /** Inscriber key: ORDINALS_INSCRIBER_WIF env, else the chmod-600 key file outside the repo. Never logged. */
@@ -33,7 +33,13 @@ export function assertTaprootRecipient(addr) {
 // ---- mempool.space ----
 const api = (p) => `${CONFIG.mempool}${p}`;
 async function getJ(p) { const r = await fetch(api(p)); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.json(); }
-export const feeRate = async () => Math.max(1, (await getJ('/v1/fees/recommended')).halfHourFee || 1);
+/** sat/vB. Pinned by ORDINALS_FEE_RATE; else halfHourFee floored at CONFIG.minFeeRate (default 1 → integer API, as before). */
+export const feeRate = async () => {
+  if (CONFIG.fixedFeeRate) return CONFIG.fixedFeeRate;
+  const floor = CONFIG.minFeeRate;
+  const f = await getJ(floor < 1 ? '/v1/fees/precise' : '/v1/fees/recommended');
+  return Math.max(floor, Math.round((f.halfHourFee || floor) * 1000) / 1000);
+};
 export const btcUsd = async () => Number((await getJ('/v1/prices')).USD) || 0;
 export const utxos = (a) => getJ(`/address/${a}/utxo`);
 export const txStatus = (txid) => getJ(`/tx/${txid}/status`);
