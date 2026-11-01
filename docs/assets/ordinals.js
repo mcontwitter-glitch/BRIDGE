@@ -253,9 +253,42 @@
   var h64 = function (x) { return String(x).replace(/^0x/, "").toLowerCase().padStart(64, "0"); };
   var big = function (n) { return BigInt(n).toString(16); };
   function encBytes(hex) { var d = hex.replace(/^0x/, ""); return h64(big(d.length / 2)) + d.padEnd(Math.ceil(d.length / 64) * 64, "0"); }
-  function provider() {
-    var p = window.ethereum; if (!p || !p.request) throw new Error("Connect an Abstract (EVM) wallet first.");
-    return p;
+  // Use the SAME wallet the main app connected (wagmi + EIP-6963), not blindly window.ethereum.
+  var eip6963 = [];
+  window.addEventListener("eip6963:announceProvider", function (e) { if (e.detail && e.detail.provider) eip6963.push(e.detail); });
+  try { window.dispatchEvent(new Event("eip6963:requestProvider")); } catch (e) {}
+  function wagmiConn() {
+    try {
+      var st = JSON.parse(localStorage.getItem("wagmi.store") || "null"), s = st && st.state, cur = s && s.current, conns = s && s.connections;
+      var c = conns && conns.value ? new Map(conns.value).get(cur) : null;
+      var rid = JSON.parse(localStorage.getItem("wagmi.recentConnectorId") || "null");
+      return { id: (c && c.connector && c.connector.id) || rid || null, address: c && c.accounts && c.accounts[0] ? String(c.accounts[0]).toLowerCase() : null };
+    } catch (e) { return { id: null, address: null }; }
+  }
+  async function accountsOf(p) { try { return ((await p.request({ method: "eth_accounts" })) || []).map(function (a) { return String(a).toLowerCase(); }); } catch (e) { return []; } }
+  async function provider() {
+    var exp = typeof window.BRIDGE_EVM_PROVIDER === "function" ? window.BRIDGE_EVM_PROVIDER() : window.BRIDGE_EVM_PROVIDER;
+    if (exp && exp.request) return exp;
+    var w = wagmiConn(), cands = [];
+    if (w.id) eip6963.forEach(function (d) { if (d.info && (d.info.rdns === w.id || d.info.uuid === w.id)) cands.push(d.provider); });
+    eip6963.forEach(function (d) { if (cands.indexOf(d.provider) < 0) cands.push(d.provider); });
+    if (window.ethereum && window.ethereum.request && cands.indexOf(window.ethereum) < 0) cands.push(window.ethereum);
+    if (!cands.length) throw new Error("Connect an Abstract (EVM) wallet first.");
+    if (w.address) for (var i = 0; i < cands.length; i++) if ((await accountsOf(cands[i])).indexOf(w.address) >= 0) return cands[i];
+    return cands[0];
+  }
+  async function ensureAbstract(p) {
+    if (parseInt(await p.request({ method: "eth_chainId" }), 16) === 2741) return;
+    setStatus("Switching your wallet to Abstract…");
+    try { await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xab5" }] }); }
+    catch (e) {
+      var code = e && (e.code || (e.data && e.data.originalError && e.data.originalError.code));
+      if (code === 4902 || /unrecognized|not added|unknown chain/i.test((e && e.message) || "")) {
+        try { await p.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0xab5", chainName: "Abstract", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://api.mainnet.abs.xyz"], blockExplorerUrls: ["https://abscan.org"] }] }); }
+        catch (e2) { throw new Error("Adding the Abstract network was rejected in your wallet. Nothing was locked."); }
+      } else throw new Error("Switch to Abstract was rejected in your wallet. Please approve the network switch. Nothing was locked.");
+    }
+    if (parseInt(await p.request({ method: "eth_chainId" }), 16) !== 2741) throw new Error("Your wallet is still not on Abstract. Switch networks and try again. Nothing was locked.");
   }
   async function waitTx(p, hash) {
     for (var i = 0; i < 120; i++) {
@@ -265,10 +298,14 @@
     }
     throw new Error("Timed out waiting for " + hash);
   }
+  window.bridgeOrdinalsLockOnAbstract = function (n, b) { return lockOnAbstract(n, b); };
   async function lockOnAbstract(nft, btc) {
-    var p = provider();
-    var from = (await p.request({ method: "eth_requestAccounts" }))[0];
-    if (parseInt(await p.request({ method: "eth_chainId" }), 16) !== 2741) throw new Error("Switch your wallet to Abstract first.");
+    var p = await provider(), w = wagmiConn();
+    var accts = ((await p.request({ method: "eth_requestAccounts" })) || []).map(function (a) { return String(a).toLowerCase(); });
+    var from = w.address && accts.indexOf(w.address) >= 0 ? w.address : accts[0];
+    if (!from) throw new Error("Connect an Abstract (EVM) wallet first.");
+    if (w.address && from !== w.address) throw new Error("Your wallet's active account (" + from.slice(0, 6) + "…) differs from the connected one (" + w.address.slice(0, 6) + "…). Switch accounts and try again. Nothing was locked.");
+    await ensureAbstract(p);
     // Recipient is the bc1p commitment, not the wallet: the lock itself proves which Taproot address gets the Ordinal.
     var opts = ORDINALS.lzOptions, me = h64(ordinalsCommitment(btc)), eid = h64(big(ORDINALS.lockEid));
     // quoteLock(address,uint256,uint32,address,bytes)
