@@ -1,4 +1,4 @@
-# Cloudflare Worker for Ordinals delivery. NOT deployed — see ../../GO_LIVE.md.
+# Cloudflare Worker for Ordinals delivery. Deployed (closed) — see ../../GO_LIVE.md.
 name = "bridge-ordinals"
 main = "dist/index.js"
 compatibility_date = "2025-09-01"
@@ -6,8 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 no_bundle = true            # bundled by build/bundle.js (swaps fs-based modules for Worker shims)
 
-# Proposed route (zone bigfoot404.biz is visible to the account token). Uncomment at go-live.
-# routes = [{ pattern = "ordinals.bigfoot404.biz", custom_domain = true }]
+# Custom domain route (approved by BIG).
+routes = [{ pattern = "ordinals.bigfoot404.biz", custom_domain = true }]
 
 [triggers]
 crons = ["*/10 * * * *"]    # same 10-minute retry loop (queued / revealing / sweeping)
