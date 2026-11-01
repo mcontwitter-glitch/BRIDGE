@@ -32,9 +32,11 @@ test('verifyLock returns the tokenURI from the NftLocked event', async () => {
   assert.strictEqual(abiString('0x' + pad('20') + strData('hi'), 0), 'hi');
 });
 test('recursive content: empty tokenURI fails clearly; ipfs.io 429 falls through to another gateway', async () => {
-  await assert.rejects(D.loadContent({ ...req('0x1'), tokenId: '3973' }, { mode: 'recursive' }), /tokenURI missing/);
+  await assert.rejects(D.loadContent({ ...req('0x1'), tokenId: '1' }, { mode: 'recursive' }), /tokenURI missing/);
+  const p = await D.loadContent({ ...req('0x1'), tokenId: '3973' }, { mode: 'recursive', fetchImpl: () => { throw new Error('no network'); } });
+  assert.strictEqual(p.metadata.a.Eyes, 'Icy'); // pinned traits, no IPFS needed
   const calls = [];
-  const c = await D.loadContent({ ...req('0x1'), tokenId: '3973', tokenURI: URI }, { mode: 'recursive', fetchImpl: gw(calls) });
+  const c = await D.loadContent({ ...req('0x1'), tokenId: '3974', tokenURI: URI }, { mode: 'recursive', fetchImpl: gw(calls) });
   assert.strictEqual(c.contentType, 'text/html;charset=utf-8'); assert.ok(c.body.length < 600);
   assert.deepStrictEqual(c.metadata.a, { Background: 'Tan', Eyes: 'Icy', 'Fur type': 'Chosen', Mouth: 'Frown' });
 });

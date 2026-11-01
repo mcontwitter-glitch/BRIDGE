@@ -1,0 +1,47 @@
+{
+ "_note": "Pinned token attributes (fetched from the collection's IPFS tokenURI via gateway.pinata.cloud). Used first in recursive mode: IPFS gateways reject Cloudflare Worker egress.",
+ "tokens": {
+  "3973": [
+   {
+    "trait_type": "Background",
+    "value": "Tan"
+   },
+   {
+    "trait_type": "Cloths",
+    "value": "None"
+   },
+   {
+    "trait_type": "Drip",
+    "value": "None"
+   },
+   {
+    "trait_type": "Eyes",
+    "value": "Icy"
+   },
+   {
+    "trait_type": "Flex",
+    "value": "None"
+   },
+   {
+    "trait_type": "Fur type",
+    "value": "Chosen"
+   },
+   {
+    "trait_type": "Head",
+    "value": "None"
+   },
+   {
+    "trait_type": "Left hand",
+    "value": "None"
+   },
+   {
+    "trait_type": "Mouth",
+    "value": "Frown"
+   },
+   {
+    "trait_type": "Right hand",
+    "value": "None"
+   }
+  ]
+ }
+}

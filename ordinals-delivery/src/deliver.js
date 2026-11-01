@@ -4,7 +4,7 @@ import { inscribe, broadcastWithRetry, buildSweep } from './inscribe.js';
 import * as store from './store.js';
 import { verifyLock } from './lock.js';
 import { shrinkImage } from './image.js';
-import { loadCollections, loadManifest, notInscribed, traitIndices, buildItemHtml, itemMetadata, HTML_TYPE } from './recursive.js';
+import { loadCollections, loadManifest, loadTraits, notInscribed, traitIndices, buildItemHtml, itemMetadata, HTML_TYPE } from './recursive.js';
 
 // ipfs.io / dweb.link / w3s.link now answer 429 "switching to a service worker gateway only" → try several gateways.
 export const IPFS_GATEWAYS = (process.env.ORDINALS_IPFS_GATEWAYS || 'https://gateway.pinata.cloud/ipfs/,https://ipfs.io/ipfs/,https://dweb.link/ipfs/').split(',').map((g) => g.trim()).filter(Boolean);
@@ -30,12 +30,15 @@ export function recursiveSetup(collection, { dir } = {}) {
 /** Content to inscribe, by mode: recursive (default) → p5.js HTML < 600 B; image → shrunk image (≤ ~20 KB); metadata → compact JSON. */
 export async function loadContent(req, { fetchImpl = fetch, mode = CONFIG.mode, dir } = {}) {
   let meta = { name: req.name, image: req.image, attributes: req.attributes };
-  if (req.tokenURI) {
-    try { const r = await fetchIpfs(req.tokenURI, fetchImpl); { const j = await r.json(); meta = { name: j.name || meta.name, image: j.image || meta.image, attributes: j.attributes || meta.attributes }; } } catch {}
+  let fetchErr = '';
+  const pinned = mode === 'recursive' && (() => { const c = loadCollections(dir)[String(req.collection || '').toLowerCase()]; return c && loadTraits(c.slug, dir)[String(Number(req.tokenId))]; })();
+  if (pinned) meta.attributes = pinned;
+  else if (req.tokenURI) {
+    try { const r = await fetchIpfs(req.tokenURI, fetchImpl); { const j = await r.json(); meta = { name: j.name || meta.name, image: j.image || meta.image, attributes: j.attributes || meta.attributes }; } } catch (e) { fetchErr = e.message; }
   }
   if (mode === 'recursive') {
     const { c, m } = recursiveSetup(req.collection, { dir });
-    if (!meta.attributes) throw Object.assign(new Error(`token attributes unavailable (tokenURI ${req.tokenURI ? 'unreadable: ' + req.tokenURI : 'missing'})`), { status: 502 });
+    if (!meta.attributes) throw Object.assign(new Error(`token attributes unavailable (tokenURI ${req.tokenURI ? 'unreadable: ' + req.tokenURI + (fetchErr ? ' — ' + fetchErr : '') : 'missing'})`), { status: 502 });
     const idx = traitIndices(c, meta.attributes);
     const body = Buffer.from(buildItemHtml({ p5Id: m.p5Id, rendererId: m.rendererId, name: c.name, tokenId: req.tokenId, idx }));
     return { contentType: HTML_TYPE, body, metadata: itemMetadata(c, req, idx), mode };

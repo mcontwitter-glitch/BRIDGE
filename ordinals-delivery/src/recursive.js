@@ -10,7 +10,7 @@ export const collectionsDir = () => process.env.ORDINALS_COLLECTIONS_DIR || path
 export function loadCollections(dir = collectionsDir()) {
   const out = {};
   for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
-    if (!/^[a-z0-9-]+\.json$/.test(f) || /\.(manifest|plan)\.json$/.test(f)) continue;
+    if (!/^[a-z0-9-]+\.json$/.test(f) || /\.(manifest|plan|traits)\.json$/.test(f)) continue;
     const c = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
     out[c.collection.toLowerCase()] = c;
   }
@@ -22,6 +22,10 @@ export function loadManifest(slug, dir = collectionsDir()) {
   if (!fs.existsSync(p)) return null;
   const m = JSON.parse(fs.readFileSync(p, 'utf8'));
   return m.complete && m.rendererId && m.p5Id ? m : null;
+}
+export function loadTraits(slug, dir = collectionsDir()) {
+  const p = path.join(dir, `${slug}.traits.json`);
+  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')).tokens || {} : {};
 }
 export function loadPlan(slug, dir = collectionsDir()) {
   const p = path.join(dir, `${slug}.plan.json`);
