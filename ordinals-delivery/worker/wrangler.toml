@@ -25,5 +25,5 @@ new_sqlite_classes = ["Deliveries"]
 ORDINALS_NETWORK = "mainnet"
 ORDINALS_MODE = "recursive"
 ORDINALS_DATA_DIR = "/tmp"  # unused in the Worker (records live in the Durable Object)
-# ORDINALS_SINK_ADDRESS = "0x…"   # set after the sink deploy + setPeer(30110, sink); until then POST returns 503
+ORDINALS_SINK_ADDRESS = "0xAaB3eEb4ef0BC311D79898A0B84FC74D24f64622"  # OrdinalsSink on Arbitrum One (eid 30110); live only once the vault has setPeer(30110, sink) (B2)
 # Secret (never in this file): wrangler secret put ORDINALS_INSCRIBER_WIF

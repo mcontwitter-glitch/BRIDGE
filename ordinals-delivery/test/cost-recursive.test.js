@@ -57,8 +57,8 @@ test('no manifest → "collection setup not inscribed", nothing inscribed', asyn
   const c = await D.loadContent({ collection: lf.collection, tokenId: 96, lockTxHash: '0x1', attributes: ATTR96 }, { mode: 'recursive', dir: empty });
   assert.strictEqual(c.contentType, 'text/html;charset=utf-8'); assert.ok(c.body.length < 600); assert.strictEqual(c.metadata.a.Head, 'GD');
   await assert.rejects(D.loadContent({ collection: '0x' + '1'.repeat(40), tokenId: 1, attributes: [] }, { mode: 'recursive', dir: empty }), /collection setup not inscribed/);
-  // repo has no manifest yet → startDelivery refuses before lock checks
-  await assert.rejects(D.startDelivery({ dest: 'ordinals', network: 'mainnet', recipient: 'bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9', collection: lf.collection, tokenId: 1, lockTxHash: '0x' + 'ab'.repeat(32) }), /collection setup not inscribed/);
+  // a collection without a setup manifest → startDelivery refuses before lock checks
+  await assert.rejects(D.startDelivery({ dest: 'ordinals', network: 'mainnet', recipient: 'bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9', collection: '0x' + '1'.repeat(40), tokenId: 1, lockTxHash: '0x' + 'ab'.repeat(32) }), /collection setup not inscribed/);
 });
 
 test('over the cap → delivery stays queued, then inscribes when fees drop', async () => {
@@ -82,4 +82,11 @@ test('batched setup: one reveal under the vsize limit, auto-split above it', asy
   const g = planBatches(items, 40_000);
   assert.strictEqual(g.length, 2); assert.deepStrictEqual(g.flat(), items.map((_, i) => i));
   assert.ok(batchCostSats({ items, rate: 0.2 }).total < one.total / 4);
+});
+
+test('repo manifest: lil-foots setup inscribed on mainnet (97 layers in one reveal + renderer)', () => {
+  const m = R.loadManifest('lil-foots');
+  assert.ok(m && m.complete); assert.strictEqual(m.rendererId, 'd1ee1cbec698deb7df8fd4f478c71c81616a35c1ec760ee84f8516a31643faf1i0');
+  const ids = Object.values(m.files); assert.strictEqual(ids.length, 97);
+  assert.ok(ids.every((id, i) => id === `6d500cccf7841c5964d6f0969339cddbd69b774eace781084d50c5d588dd1efdi${i}`));
 });

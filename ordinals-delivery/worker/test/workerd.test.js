@@ -12,11 +12,11 @@ const U = (p) => `http://127.0.0.1:${PORT}${p}`;
 const post = (b) => fetch(U('/api/ordinals/deliveries'), { method: 'POST', body: JSON.stringify(b) });
 
 test('workerd: gated until the sink is configured; health/estimate/cron; Schnorr signing works', async () => {
-  const p = await boot({ ORDINALS_SELFTEST: '1' });
+  const p = await boot({ ORDINALS_SELFTEST: '1', ORDINALS_SINK_ADDRESS: '' }); // override the wrangler.toml sink → gated
   try {
     const h = await (await fetch(U('/api/ordinals/health'))).json();
     assert.deepStrictEqual([h.runtime, h.mainnet, h.mode, h.sink, h.destEid, h.keyConfigured], ['cloudflare-worker', true, 'recursive', null, null, false]);
-    assert.strictEqual(h.setup['lil-foots'], 'collection setup not inscribed');
+    assert.strictEqual(h.setup['lil-foots'], 'inscribed');
     const r = await post({ dest: 'ordinals' }); assert.strictEqual(r.status, 503); assert.match((await r.json()).error, /not live/);
     const st = await (await fetch(U('/__selftest'))).json(); assert.strictEqual(st.ok, true); assert.strictEqual(st.fundingAddressPrefix, 'bc1p');
     assert.strictEqual((await fetch(U('/__cron'))).status, 404, 'cron path not reachable from outside');
