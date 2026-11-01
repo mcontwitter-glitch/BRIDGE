@@ -6,6 +6,8 @@ import { liveEstimate, setupCostFromPlan } from './cost.js';
 import { loadCollections, loadManifest, loadPlan } from './recursive.js';
 const setupStatus = () => Object.fromEntries(Object.values(loadCollections()).map((c) => [c.slug, loadManifest(c.slug) ? 'inscribed' : 'collection setup not inscribed']));
 import { feeRate, btcUsd } from './btc.js';
+import { listInscriptions, COLLECTION_ROUTE } from './public.js';
+import { list as listRecords } from './store.js';
 
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
 const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(body)); };
@@ -25,6 +27,8 @@ http.createServer(async (req, res) => {
     if (req.method === 'GET' && m) { const r = await refresh(m[1]); return r ? send(res, 200, pub(r)) : send(res, 404, { error: 'not found' }); }
     const bl = /^\/api\/ordinals\/deliveries\/by-lock\/(0x[0-9a-fA-F]{64})$/.exec(u.pathname);
     if (req.method === 'GET' && bl) { const f = findByLock(bl[1]); const r = f && await refresh(f.id); return r ? send(res, 200, pub(r)) : send(res, 404, { error: 'not found' }); }
+    const cr = COLLECTION_ROUTE.exec(u.pathname);
+    if (req.method === 'GET' && cr) { const out = listInscriptions(listRecords(), cr[1], loadCollections()); return out ? send(res, 200, out) : send(res, 404, { error: 'unknown collection' }); }
     send(res, 404, { error: 'not found' });
   } catch (e) { send(res, e.status || 500, { error: e.message }); }
 }).listen(CONFIG.port, '127.0.0.1', () => console.log(`ordinals-delivery (${CONFIG.network}, mainnet:${CONFIG.mainnet}) on 127.0.0.1:${CONFIG.port}`));

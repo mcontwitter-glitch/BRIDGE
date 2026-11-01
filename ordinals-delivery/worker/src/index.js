@@ -1,6 +1,7 @@
 // Cloudflare Worker: HTTP API (same routes as src/server.js) + cron every 10 min → one Durable Object that owns all state.
 import { DurableObject } from 'cloudflare:workers';
 import * as store from './store.worker.js';
+import { listInscriptions, COLLECTION_ROUTE } from '../../src/public.js';
 
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
 const json = (status, body) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...cors } });
@@ -46,6 +47,8 @@ export class Deliveries extends DurableObject {
       if (req.method === 'GET' && m) { const r = await deliver.refresh(m[1]); return r ? json(200, pub(r)) : json(404, { error: 'not found' }); }
       const bl = /^\/api\/ordinals\/deliveries\/by-lock\/(0x[0-9a-fA-F]{64})$/.exec(u.pathname);
       if (req.method === 'GET' && bl) { const f = deliver.findByLock(bl[1]); const r = f && await deliver.refresh(f.id); return r ? json(200, pub(r)) : json(404, { error: 'not found' }); }
+      const cr = COLLECTION_ROUTE.exec(u.pathname);
+      if (req.method === 'GET' && cr) { const out = listInscriptions(store.list(), cr[1], rec.loadCollections()); return out ? new Response(JSON.stringify(out), { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...cors } }) : json(404, { error: 'unknown collection' }); }
       if (u.pathname === '/__selftest' && this.env.ORDINALS_SELFTEST === '1') return json(200, await selftest(btc));
       return json(404, { error: 'not found' });
     } catch (e) { return json(e.status || 500, { error: e.message }); }
