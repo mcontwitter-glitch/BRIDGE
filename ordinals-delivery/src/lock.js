@@ -14,6 +14,15 @@ export function ordinalsCommitment(btcAddress) {
 const err = (m, status = 400) => Object.assign(new Error(m), { status });
 const word = (data, i) => data.slice(2 + i * 64, 2 + (i + 1) * 64);
 const addrOf = (w) => '0x' + w.slice(24).toLowerCase();
+/** ABI-decode a dynamic string whose offset sits in word i of data (hex). '' when absent/malformed. */
+export function abiString(data, i) {
+  try {
+    const off = Number(BigInt('0x' + word(data, i))) * 2, len = Number(BigInt('0x' + data.slice(2 + off, 2 + off + 64))) * 2;
+    if (!len || 2 + off + 64 + len > data.length) return '';
+    return new TextDecoder().decode(Buffer.from(data.slice(2 + off + 64, 2 + off + 64 + len), 'hex'));
+  } catch { return ''; }
+}
+const TOKEN_URI_SELECTOR = hex(keccak_256('tokenURI(uint256)')).slice(0, 10);
 
 export function makeRpc(url = CONFIG.lock.rpc) {
   let n = 0;
@@ -58,5 +67,8 @@ export async function verifyLock({ lockTxHash, collection, tokenId, recipient },
   const rec = await rpc('eth_call', [{ to: cfg.vault, data: LOCKS_SELECTOR + lockId.slice(2) }, 'latest']);
   // LockRecord getter: (collection, tokenId, owner, destEid, tokenURI offset, active) — active is word 5.
   if (!rec || rec.length < 2 + 6 * 64 || BigInt('0x' + word(rec, 5)) !== 1n) throw err('lock is no longer active on the vault');
-  return { lockId: lockId.toLowerCase(), owner: addrOf(word(log.data, 0)), destEid, blockNumber: parseInt(rc.blockNumber, 16) };
+  // tokenURI from the NftLocked event (word 2 = offset); fall back to collection.tokenURI(tokenId).
+  let tokenURI = abiString(log.data, 2);
+  if (!tokenURI) { try { tokenURI = abiString(await rpc('eth_call', [{ to: collection, data: TOKEN_URI_SELECTOR + id.toString(16).padStart(64, '0') }, 'latest']), 0); } catch {} }
+  return { lockId: lockId.toLowerCase(), owner: addrOf(word(log.data, 0)), destEid, blockNumber: parseInt(rc.blockNumber, 16), tokenURI };
 }

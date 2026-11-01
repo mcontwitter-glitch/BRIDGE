@@ -7,7 +7,7 @@ const src = fs.readFileSync(new URL('../../docs/assets/ordinals.js', import.meta
 function load(win = {}) {
   const el = () => ({ classList: { toggle() {} }, style: {}, appendChild() {}, setAttribute() {} });
   const document = { addEventListener() {}, documentElement: {}, querySelectorAll: () => [], querySelector: () => null, createElement: el, head: el(), body: el() };
-  const window = { ...win };
+  const window = { addEventListener() {}, dispatchEvent() {}, ...win };
   vm.runInNewContext(src, { window, document, MutationObserver: class { observe() {} }, console, setTimeout });
   return window;
 }
@@ -35,7 +35,7 @@ test('front end: USD estimate for the active mode is read before locking', async
   const est = { mode: 'recursive', feeRate: 1, marginUsd: 18, recursive: { usd: 0.85, sats: 1098, underCap: true }, image: { usd: 4.6, sats: 5990, underCap: true } };
   const ctxFetch = async (u) => { assert.strictEqual(u, 'https://x/api/ordinals/estimate'); return { json: async () => est }; };
   globalThis.fetch = ctxFetch;
-  const w2 = (() => { const src2 = src; const window = { BRIDGE_ORDINALS_URL: 'https://x' }; const el = () => ({ classList: { toggle() {} }, style: {}, appendChild() {}, setAttribute() {} });
+  const w2 = (() => { const src2 = src; const window = { addEventListener() {}, dispatchEvent() {}, BRIDGE_ORDINALS_URL: 'https://x' }; const el = () => ({ classList: { toggle() {} }, style: {}, appendChild() {}, setAttribute() {} });
     vm.runInNewContext(src2, { window, document: { addEventListener() {}, documentElement: {}, querySelectorAll: () => [], querySelector: () => null, createElement: el, head: el(), body: el() }, MutationObserver: class { observe() {} }, console, setTimeout, fetch: ctxFetch }); return window; })();
   const e = await w2.bridgeOrdinalsEstimate();
   assert.deepStrictEqual({ ...e }, { usd: 0.85, sats: 1098, underCap: true, feeRate: 1, mode: 'recursive', marginUsd: 18 });

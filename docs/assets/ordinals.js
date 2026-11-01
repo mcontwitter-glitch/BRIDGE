@@ -347,6 +347,10 @@
       for (var a = 0; a < 40; a++) { // the service needs the lock to reach its confirmation depth (HTTP 425)
         var r = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) });
         d = await r.json().catch(function () { return {}; });
+        if (r.status === 409) { // already requested (e.g. page reload): resume the existing record instead of giving up
+          var lr = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/by-lock/" + lockTx).catch(function () { return null; });
+          if (lr && lr.ok) { d = await lr.json(); break; }
+        }
         if (r.status !== 425) { if (!r.ok) throw new Error((d.error || "Delivery service error " + r.status) + " Your lock tx: " + lockTx); break; }
         setStatus("Waiting for Abstract confirmations on " + lockTx.slice(0, 10) + "…");
         await new Promise(function (res) { setTimeout(res, 5000); });
@@ -355,10 +359,13 @@
       for (var i = 0; i < 360 && d.status !== "delivered" && d.status !== "failed"; i++) {
         setStatus(d.status === "queued" ? (d.waiting || "Waiting for lower Bitcoin fees") + (d.estUsd != null ? " (now ~$" + d.estUsd + ")" : "") + ". Your NFT is safely locked; we retry automatically." : (d.waiting ? d.waiting : "Ordinal delivery " + d.status + "…"));
         await new Promise(function (res) { setTimeout(res, 10000); });
-        d = await (await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/" + encodeURIComponent(d.id))).json();
+        try { // transient network/5xx errors must not end polling
+          var pr = await fetch(ORDINALS.deliveryUrl + "/api/ordinals/deliveries/" + encodeURIComponent(d.id));
+          if (pr.ok) d = await pr.json();
+        } catch (pe) {}
         state.delivery = d; renderField();
       }
-      if (d.status === "failed") throw new Error((d.error || "Delivery failed") + " Your lock tx: " + lockTx);
+      if (d.status === "failed") throw new Error("Ordinal delivery failed: " + (d.error || "unknown error") + ". Your NFT stays locked; retry with the same lock tx: " + lockTx);
       setStatus(d.status === "delivered" ? "Ordinal delivered: " + d.inscriptionId : "Ordinal " + d.status + " — check the links above.", d.status === "delivered");
     } catch (e) {
       setStatus((e && e.message ? e.message : String(e)));

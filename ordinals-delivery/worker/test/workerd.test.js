@@ -35,5 +35,6 @@ test('workerd: with a sink set, bad requests are rejected and recursive needs th
     r = await post({ dest: 'ordinals', network: 'mainnet', recipient: 'bc1pua8xnvy6cx7g632g3rx8gy5z9qg5s446d267gkzgenmsd6ewkwasrsmmg9', collection: 'lil-foots', tokenId: 1, lockTxHash: '0x' + '22'.repeat(32) });
     assert.strictEqual(r.status, 503); assert.match((await r.json()).error, /collection setup not inscribed/);
     assert.strictEqual((await fetch(U('/api/ordinals/deliveries/ord_0000000000000000'))).status, 404);
+    const bl = await fetch(U('/api/ordinals/deliveries/by-lock/0x' + 'ab'.repeat(32))); assert.strictEqual(bl.status, 404); assert.deepStrictEqual(await bl.json(), { error: 'not found' });
   } finally { await stop(p); }
 });

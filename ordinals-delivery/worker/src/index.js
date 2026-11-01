@@ -4,7 +4,7 @@ import * as store from './store.worker.js';
 
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
 const json = (status, body) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...cors } });
-const pub = (r) => r && { id: r.id, sweepTxid: r.sweepTxid, status: r.status, waiting: r.waiting, estUsd: r.estUsd, costUsd: r.costUsd, network: r.network, recipient: r.recipient, commitTxid: r.commitTxid, revealTxid: r.revealTxid, inscriptionId: r.inscriptionId, error: r.error };
+const pub = (r) => r && { id: r.id, lockTxHash: r.lockTxHash, tokenId: r.tokenId, createdAt: r.createdAt, updatedAt: r.updatedAt, lastError: r.lastError, sweepTxid: r.sweepTxid, status: r.status, waiting: r.waiting, estUsd: r.estUsd, costUsd: r.costUsd, network: r.network, recipient: r.recipient, commitTxid: r.commitTxid, revealTxid: r.revealTxid, inscriptionId: r.inscriptionId, error: r.error };
 const SECRET_KEYS = new Set(['ORDINALS_INSCRIBER_WIF']);
 
 export class Deliveries extends DurableObject {
@@ -39,11 +39,13 @@ export class Deliveries extends DurableObject {
         const raw = await req.text(); if (raw.length > 20000) return json(413, { error: 'too large' });
         if (CONFIG.lock.destEid == null) return json(503, { error: 'Ordinals destination not live yet (sink not configured)' });
         const r = await deliver.startDelivery(JSON.parse(raw || '{}'));
-        this.ctx.waitUntil(deliver.run(r.id)); // startDelivery already kicked it off; keep the DO alive until it settles
-        return json(202, pub(store.get(r.id) || r));
+        if (['pending', 'queued', 'revealing'].includes(r.status)) this.ctx.waitUntil(deliver.run(r.id)); // startDelivery already kicked it off; keep the DO alive until it settles
+        return json(202, pub(store.get(r.id) || r)); // same lock again → existing record (failed+no commit → re-queued)
       }
       const m = /^\/api\/ordinals\/deliveries\/(ord_[0-9a-f]{16})$/.exec(u.pathname);
       if (req.method === 'GET' && m) { const r = await deliver.refresh(m[1]); return r ? json(200, pub(r)) : json(404, { error: 'not found' }); }
+      const bl = /^\/api\/ordinals\/deliveries\/by-lock\/(0x[0-9a-fA-F]{64})$/.exec(u.pathname);
+      if (req.method === 'GET' && bl) { const f = deliver.findByLock(bl[1]); const r = f && await deliver.refresh(f.id); return r ? json(200, pub(r)) : json(404, { error: 'not found' }); }
       if (u.pathname === '/__selftest' && this.env.ORDINALS_SELFTEST === '1') return json(200, await selftest(btc));
       return json(404, { error: 'not found' });
     } catch (e) { return json(e.status || 500, { error: e.message }); }

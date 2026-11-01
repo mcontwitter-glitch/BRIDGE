@@ -6,7 +6,18 @@ import { verifyLock } from './lock.js';
 import { shrinkImage } from './image.js';
 import { loadCollections, loadManifest, notInscribed, traitIndices, buildItemHtml, itemMetadata, HTML_TYPE } from './recursive.js';
 
-const ipfs = (u) => (u || '').replace(/^ipfs:\/\//, 'https://ipfs.io/ipfs/');
+// ipfs.io / dweb.link / w3s.link now answer 429 "switching to a service worker gateway only" → try several gateways.
+export const IPFS_GATEWAYS = (process.env.ORDINALS_IPFS_GATEWAYS || 'https://gateway.pinata.cloud/ipfs/,https://ipfs.io/ipfs/,https://dweb.link/ipfs/').split(',').map((g) => g.trim()).filter(Boolean);
+const ipfsUrls = (u) => /^ipfs:\/\//.test(u || '') ? IPFS_GATEWAYS.map((g) => g + u.replace(/^ipfs:\/\/(ipfs\/)?/, '')) : [u];
+const ipfs = (u) => ipfsUrls(u)[0] || '';
+/** First OK response across gateways (with a per-try timeout). */
+export async function fetchIpfs(u, fetchImpl = fetch) {
+  let last;
+  for (const url of ipfsUrls(u)) {
+    try { const r = await fetchImpl(url, { signal: AbortSignal.timeout?.(15000) }); if (r.ok) return r; last = new Error(`${r.status} ${url}`); } catch (e) { last = e; }
+  }
+  throw last || new Error('no gateway');
+}
 
 /** Recursive mode needs the collection definition AND a complete setup manifest; otherwise nothing is inscribed. */
 export function recursiveSetup(collection, { dir } = {}) {
@@ -20,11 +31,11 @@ export function recursiveSetup(collection, { dir } = {}) {
 export async function loadContent(req, { fetchImpl = fetch, mode = CONFIG.mode, dir } = {}) {
   let meta = { name: req.name, image: req.image, attributes: req.attributes };
   if (req.tokenURI) {
-    try { const r = await fetchImpl(ipfs(req.tokenURI)); if (r.ok) { const j = await r.json(); meta = { name: j.name || meta.name, image: j.image || meta.image, attributes: j.attributes || meta.attributes }; } } catch {}
+    try { const r = await fetchIpfs(req.tokenURI, fetchImpl); { const j = await r.json(); meta = { name: j.name || meta.name, image: j.image || meta.image, attributes: j.attributes || meta.attributes }; } } catch {}
   }
   if (mode === 'recursive') {
     const { c, m } = recursiveSetup(req.collection, { dir });
-    if (!meta.attributes) throw Object.assign(new Error('token attributes unavailable (tokenURI unreadable)'), { status: 502 });
+    if (!meta.attributes) throw Object.assign(new Error(`token attributes unavailable (tokenURI ${req.tokenURI ? 'unreadable: ' + req.tokenURI : 'missing'})`), { status: 502 });
     const idx = traitIndices(c, meta.attributes);
     const body = Buffer.from(buildItemHtml({ p5Id: m.p5Id, rendererId: m.rendererId, name: c.name, tokenId: req.tokenId, idx }));
     return { contentType: HTML_TYPE, body, metadata: itemMetadata(c, req, idx), mode };
@@ -33,7 +44,7 @@ export async function loadContent(req, { fetchImpl = fetch, mode = CONFIG.mode, 
   const metadata = { n: meta.name || `#${req.tokenId}`, c: String(req.collection).toLowerCase(), t: String(req.tokenId), l: req.lockTxHash };
   if (mode === 'image' && meta.image) {
     try {
-      const r = await fetchImpl(ipfs(meta.image));
+      const r = await fetchIpfs(meta.image, fetchImpl);
       const body = Buffer.from(await r.arrayBuffer());
       const img = r.ok ? await shrinkImage(body) : null;
       if (img) return { contentType: img.contentType, body: img.body, metadata };
@@ -58,15 +69,41 @@ export async function checkLock(req, deps = {}) {
   return verifyLock(req, { ...deps, isUsed });
 }
 
-export async function startDelivery(req) {
+/** Newest record for a lock tx hash (or lockId), or null. */
+export const findByLock = (k) => { k = String(k || '').toLowerCase(); return store.list().filter((r) => r.lockTxHash?.toLowerCase() === k || r.lockId?.toLowerCase() === k).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] || null; };
+
+/**
+ * Same lock POSTed again: return the existing record. A 'failed' record that never got a commit signed is re-queued
+ * (lock re-verified, tokenURI refreshed). Anything with a commitTxid is left to the reveal/sweep recovery path → never double-inscribes.
+ */
+export async function resumeExisting(rec, req, deps = {}) {
+  if (rec.status !== 'failed' || rec.commitTxid || rec.commitHex || rec.revealHex) return rec;
+  if (String(req.recipient || '') !== rec.recipient || String(req.tokenId) !== String(rec.tokenId) || String(req.collection || '').toLowerCase() !== String(rec.collection || '').toLowerCase())
+    throw Object.assign(new Error('lockTxHash already used for a delivery to a different recipient/token'), { status: 409 });
+  const lock = CONFIG.lock.skip ? { tokenURI: '' } : await verifyLock(req, { ...deps, isUsed: () => false }); // still active + commits to this recipient
+  const r = rec.req || {};
+  const tokenURI = r.tokenURI || req.tokenURI || lock.tokenURI || '';
+  return store.patch(rec.id, { status: 'queued', waiting: 'Retrying after: ' + (rec.error || 'failure'), lastError: rec.error, error: undefined, content: undefined, retries: (rec.retries || 0) + 1,
+    req: { ...r, tokenURI, attributes: r.attributes || req.attributes } });
+}
+
+export async function startDelivery(req, deps = {}) {
   validateRequest(req);
   const key = String(req.lockTxHash).toLowerCase();
+  const existing = findByLock(key);
+  if (existing) {
+    if (inFlight.has(key)) throw Object.assign(new Error('lockTxHash already being processed'), { status: 409 });
+    inFlight.add(key);
+    let rec; try { rec = await resumeExisting(existing, req, deps); } finally { inFlight.delete(key); }
+    if (RETRYABLE.includes(rec.status)) run(rec.id);
+    return rec;
+  }
   if (inFlight.has(key)) throw Object.assign(new Error('lockTxHash already being processed'), { status: 409 });
   if (CONFIG.mode === 'recursive') recursiveSetup(req.collection); // 503 'collection setup not inscribed' before anything else
   inFlight.add(key);
   let rec;
   try {
-    const lock = await checkLock(req);
+    const lock = await checkLock(req, deps);
     rec = store.create({ recipient: req.recipient, collection: req.collection, tokenId: String(req.tokenId), lockTxHash: key, lockId: lock.lockId, lockOwner: lock.owner, lockVerified: !lock.skipped,
       req: { attributes: req.attributes, tokenURI: req.tokenURI || lock.tokenURI || '', image: req.image || '', name: req.name || '', collection: req.collection, tokenId: String(req.tokenId), lockTxHash: key } });
   } finally { inFlight.delete(key); }
