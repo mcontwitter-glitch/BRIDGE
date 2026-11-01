@@ -64,7 +64,7 @@ export function validateRequest(req) {
 let inFlight = new Set();
 /** Verifies the Abstract lock (see lock.js); signet-only runs may skip it with ORDINALS_SKIP_LOCK_CHECK=1. */
 export async function checkLock(req, deps = {}) {
-  const isUsed = deps.isUsed || ((k) => inFlight.has(k) || store.isUsed(k));
+  const isUsed = deps.isUsed || ((k) => store.isUsed(k)) // NOT inFlight: startDelivery adds the key before checkLock, which made every new lock 409;
   if (CONFIG.lock.skip) { if (isUsed(String(req.lockTxHash).toLowerCase())) throw Object.assign(new Error('lockTxHash already used for a delivery'), { status: 409 }); return { lockId: req.lockId || null, skipped: true }; }
   return verifyLock(req, { ...deps, isUsed });
 }

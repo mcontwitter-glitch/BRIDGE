@@ -58,3 +58,9 @@ test('startDelivery on an existing lock returns the record instead of 409', asyn
   const r = await D.startDelivery(req(tx), { rpc, cfg });
   assert.strictEqual(r.id, rec.id); assert.strictEqual(r.status, 'inscribed');
 });
+test('a NEW lock is not rejected as "already used" by its own in-flight marker', async () => {
+  const tx = '0x' + '66'.repeat(32);
+  for (const o of store.list()) store.patch(o.id, { lockId: '0xother' }); // isolate: mock rpc always returns LOCKID
+  const rec = await D.startDelivery(req(tx), { rpc, cfg, isUsed: undefined });
+  assert.strictEqual(rec.lockTxHash, tx); assert.ok(rec.id);
+});
