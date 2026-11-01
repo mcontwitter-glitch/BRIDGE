@@ -1,5 +1,6 @@
 # Cloudflare Worker for Ordinals delivery. Deployed (closed) — see ../../GO_LIVE.md.
 name = "bridge-ordinals"
+account_id = "6492a246aad487a95f20f8f0b8cbd03f"
 main = "dist/index.js"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
