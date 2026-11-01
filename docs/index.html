@@ -9,7 +9,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script src="/assets/deliver.js?v=batch5"></script>
-    <script src="/assets/ordinals.js?v=ord4"></script>
+    <script>
+      // Ordinals delivery: OrdinalsSink on Arbitrum One (lock eid 30110) + delivery Worker.
+      // Nothing locks until B2 (vault.setPeer(30110, sink)) is confirmed on Abstract.
+      window.BRIDGE_ORDINALS_SINK = "0xAaB3eEb4ef0BC311D79898A0B84FC74D24f64622";
+      window.BRIDGE_ORDINALS_URL = "https://ordinals.bigfoot404.biz";
+    </script>
+    <script src="/assets/ordinals.js?v=ord5"></script>
     <script type="module" crossorigin src="/assets/index-605edb9a.js?v=batch5"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-CiIhTrlA.css">
   </head>
