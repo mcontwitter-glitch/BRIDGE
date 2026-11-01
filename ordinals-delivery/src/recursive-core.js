@@ -9,6 +9,14 @@ export function notInscribed(slug) {
   return Object.assign(new Error(`collection setup not inscribed (${slug}): run setup:collection first`), { status: 503, code: 'collection_setup_not_inscribed' });
 }
 
+/** Pinned traits file → { tokenId: attributes }. enc 'idx62': one 0-9a-zA-Z char per type = index into c.vals (decoded lazily per token). */
+const A62 = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+export function traitsFor(c, file, tokenId) {
+  const t = file?.tokens?.[String(Number(tokenId))];
+  if (!t || !c) return null;
+  if (file.enc !== 'idx62') return t;
+  return Object.fromEntries(c.types.map((type, k) => [type, c.vals[k][A62.indexOf(t[k])]]));
+}
 export const layerKey = (type, value) => `${type}/${value}`;
 export const layerFile = (c, type, value) => `${c.dirs[type]}/${c.fileFix?.[value] ?? value}.png`;
 

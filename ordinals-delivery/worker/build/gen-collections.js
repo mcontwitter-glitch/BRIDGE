@@ -6,7 +6,7 @@ const out = { collections: {}, manifests: {}, plans: {}, traits: {} };
 for (const f of fs.readdirSync(dir)) {
   const j = () => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
   if (/\.manifest\.json$/.test(f)) out.manifests[f.replace('.manifest.json', '')] = j();
-  else if (/\.traits\.json$/.test(f)) out.traits[f.replace('.traits.json', '')] = j().tokens || {};
+  else if (/\.traits\.json$/.test(f)) out.traits[f.replace('.traits.json', '')] = j();
   else if (/\.plan\.json$/.test(f)) out.plans[f.replace('.plan.json', '')] = j();
   else if (/^[a-z0-9-]+\.json$/.test(f)) { const c = j(); out.collections[c.collection.toLowerCase()] = c; }
 }

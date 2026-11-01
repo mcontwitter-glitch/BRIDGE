@@ -4,7 +4,7 @@ import { inscribe, broadcastWithRetry, buildSweep } from './inscribe.js';
 import * as store from './store.js';
 import { verifyLock } from './lock.js';
 import { shrinkImage } from './image.js';
-import { loadCollections, loadManifest, loadTraits, notInscribed, traitIndices, buildItemHtml, itemMetadata, HTML_TYPE } from './recursive.js';
+import { loadCollections, loadManifest, loadTraits, traitsFor, notInscribed, traitIndices, buildItemHtml, itemMetadata, HTML_TYPE } from './recursive.js';
 
 // ipfs.io / dweb.link / w3s.link now answer 429 "switching to a service worker gateway only" → try several gateways.
 export const IPFS_GATEWAYS = (process.env.ORDINALS_IPFS_GATEWAYS || 'https://gateway.pinata.cloud/ipfs/,https://ipfs.io/ipfs/,https://dweb.link/ipfs/').split(',').map((g) => g.trim()).filter(Boolean);
@@ -31,7 +31,7 @@ export function recursiveSetup(collection, { dir } = {}) {
 export async function loadContent(req, { fetchImpl = fetch, mode = CONFIG.mode, dir } = {}) {
   let meta = { name: req.name, image: req.image, attributes: req.attributes };
   let fetchErr = '';
-  const pinned = mode === 'recursive' && (() => { const c = loadCollections(dir)[String(req.collection || '').toLowerCase()]; return c && loadTraits(c.slug, dir)[String(Number(req.tokenId))]; })();
+  const pinned = mode === 'recursive' && (() => { const c = loadCollections(dir)[String(req.collection || '').toLowerCase()]; return c && traitsFor(c, loadTraits(c.slug, dir), req.tokenId); })();
   if (pinned) meta.attributes = pinned;
   else if (req.tokenURI) {
     try { const r = await fetchIpfs(req.tokenURI, fetchImpl); { const j = await r.json(); meta = { name: j.name || meta.name, image: j.image || meta.image, attributes: j.attributes || meta.attributes }; } } catch (e) { fetchErr = e.message; }

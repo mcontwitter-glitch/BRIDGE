@@ -25,7 +25,7 @@ export function loadManifest(slug, dir = collectionsDir()) {
 }
 export function loadTraits(slug, dir = collectionsDir()) {
   const p = path.join(dir, `${slug}.traits.json`);
-  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')).tokens || {} : {};
+  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null;
 }
 export function loadPlan(slug, dir = collectionsDir()) {
   const p = path.join(dir, `${slug}.plan.json`);
